@@ -1,4 +1,4 @@
-# Déployer TGBBot
+# Déployer ImmoAlert
 
 [Retour au README](../README.md) · [Configuration](CONFIGURATION.md)
 
@@ -7,8 +7,8 @@
 Sur un serveur disposant de Git et Docker Compose :
 
 ```bash
-git clone https://github.com/ZEBDA1/TGBBot.git
-cd TGBBot
+git clone https://github.com/ZEBDA1/ImmoAlert.git
+cd ImmoAlert
 cp .env.example .env
 mkdir -p storage
 ```

@@ -33,7 +33,7 @@ Le workflow [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) :
 2. Construit l’image Docker après le succès des tests.
 3. Vérifie l’import de l’application, l’initialisation d’une base neuve et le healthcheck dans un conteneur sans réseau.
 
-Aucun secret de production n’est nécessaire pour cette CI. Les résultats courants sont visibles dans [GitHub Actions](https://github.com/ZEBDA1/TGBBot/actions).
+Aucun secret de production n’est nécessaire pour cette CI. Les résultats courants sont visibles dans [GitHub Actions](https://github.com/ZEBDA1/ImmoAlert/actions).
 
 ## Vérifications réalisées sur le serveur
 

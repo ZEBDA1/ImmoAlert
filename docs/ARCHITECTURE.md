@@ -1,4 +1,4 @@
-# Architecture de TGBBot
+# Architecture de ImmoAlert
 
 [Retour au README](../README.md)
 

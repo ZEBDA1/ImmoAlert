@@ -464,7 +464,7 @@ async def cmd_start(msg: Message, state: FSMContext):
         or health[source]["disabled_until"] <= datetime.utcnow()
     )
     text = (
-        "🏠 <b>TGBbot — radar immobilier</b>\n\n"
+        "🏠 <b>ImmoAlert — radar immobilier</b>\n\n"
         f"Statut: {plan}{premium_exp}{admin_tag}\n"
         f"🎯 Filtres actifs: <b>{len(filters)}</b>\n"
         f"🛰️ Sources suivies: <b>{active_sources}</b>\n\n"

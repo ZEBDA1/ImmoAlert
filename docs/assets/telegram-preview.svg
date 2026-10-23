@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
   <title id="title">Configurer sa recherche, recevoir les annonces</title>
-  <desc id="desc">Deux maquettes de conversation Telegram : le panneau de commandes TGBBot et une alerte pour un appartement fictif à Mantes-la-Jolie.</desc>
+  <desc id="desc">Deux maquettes de conversation Telegram : le panneau de commandes ImmoAlert et une alerte pour un appartement fictif à Mantes-la-Jolie.</desc>
   <defs>
     <linearGradient id="background" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#111324"/><stop offset="1" stop-color="#0d1825"/></linearGradient>
     <linearGradient id="chat" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#111e2e"/><stop offset="1" stop-color="#0d1725"/></linearGradient>
@@ -14,12 +14,12 @@
       <path d="M20 0h454a20 20 0 0 1 20 20v56H0V20A20 20 0 0 1 20 0Z" fill="#1d2d43"/>
       <circle cx="40" cy="38" r="20" fill="#7c5cce"/>
       <path d="M29 39l11-9 11 9M32 37v12h16V37M38 49v-7h5v7" stroke="#f2ecff" fill="none" stroke-width="1.6" stroke-linejoin="round"/>
-      <text x="72" y="34" fill="#f1f4fa" font-size="18" font-weight="700">TGBBot</text>
+      <text x="72" y="34" fill="#f1f4fa" font-size="18" font-weight="700">ImmoAlert</text>
       <text x="72" y="55" fill="#82a3c4" font-size="12">bot</text>
       <rect x="350" y="93" width="120" height="37" rx="12" fill="#31475f"/>
       <text x="371" y="117" fill="#f3f5ff" font-size="15">/start</text>
       <rect x="22" y="148" width="407" height="127" rx="14" fill="#1e3046"/>
-      <text x="40" y="179" fill="#e7e7f7" font-size="19" font-weight="700">TGBbot — radar immobilier</text>
+      <text x="40" y="179" fill="#e7e7f7" font-size="19" font-weight="700">ImmoAlert — radar immobilier</text>
       <text x="40" y="208" fill="#bac9da" font-size="15">Statut : FREE</text>
       <text x="40" y="232" fill="#bac9da" font-size="15">Filtres actifs : 1</text>
       <text x="40" y="257" fill="#bac9da" font-size="15">Choisis une action dans le panneau.</text>
@@ -47,7 +47,7 @@
       <path d="M20 0h478a20 20 0 0 1 20 20v56H0V20A20 20 0 0 1 20 0Z" fill="#1d2d43"/>
       <circle cx="40" cy="38" r="20" fill="#7c5cce"/>
       <path d="M29 39l11-9 11 9M32 37v12h16V37M38 49v-7h5v7" stroke="#f2ecff" fill="none" stroke-width="1.6" stroke-linejoin="round"/>
-      <text x="72" y="34" fill="#f1f4fa" font-size="18" font-weight="700">TGBBot</text>
+      <text x="72" y="34" fill="#f1f4fa" font-size="18" font-weight="700">ImmoAlert</text>
       <text x="72" y="55" fill="#82a3c4" font-size="12">bot</text>
       <rect x="22" y="96" width="474" height="278" rx="14" fill="#1e3046"/>
       <text x="42" y="127" fill="#ad9ae9" font-size="13" font-weight="700" letter-spacing="0.9">NOUVELLE OPPORTUNITÉ</text>
@@ -66,6 +66,6 @@
       <text x="287" y="466" text-anchor="middle" fill="#e6dcff" font-size="15" font-weight="600">Garder cette annonce</text>
     </g>
     <text x="58" y="681" fill="#7b879e" font-size="12">Illustration de l’interface · annonce et données fictives</text>
-    <text x="1222" y="681" text-anchor="end" fill="#8f7cbd" font-size="12" letter-spacing="1">TGBBot / ZEBDA</text>
+    <text x="1222" y="681" text-anchor="end" fill="#8f7cbd" font-size="12" letter-spacing="1">ImmoAlert / ZEBDA</text>
   </g>
 </svg>

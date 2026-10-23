@@ -2,7 +2,7 @@
 
 [Retour au README](../../README.md)
 
-`banner.svg` et `telegram-preview.svg` sont des illustrations vectorielles créées pour TGBBot. Elles sont versionnées dans le dépôt, sans police distante, script, ressource externe ni identifiant de compte.
+`banner.svg` et `telegram-preview.svg` sont des illustrations vectorielles créées pour ImmoAlert. Elles sont versionnées dans le dépôt, sans police distante, script, ressource externe ni identifiant de compte.
 
 La palette reprend le violet du profil de ZEBDA, complété par des accents cyan inspirés de Telegram. La bannière associe un radar immobilier à une carte d’annonce ; l’aperçu présente le panneau et une alerte.
 

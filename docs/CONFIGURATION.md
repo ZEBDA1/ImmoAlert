@@ -1,4 +1,4 @@
-# Configuration de TGBBot
+# Configuration de ImmoAlert
 
 [Retour au README](../README.md) · [Déploiement](DEPLOYMENT.md)
 

@@ -1,14 +1,14 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="TGBBot — Votre radar immobilier sur Telegram" width="100%" />
+<img src="docs/assets/banner.svg" alt="ImmoAlert — Votre radar immobilier sur Telegram" width="100%" />
 
-# TGBBot
+# ImmoAlert
 
 **Les annonces qui vous intéressent. Directement dans Telegram.**
 
 Surveillez plusieurs portails, définissez vos critères et retrouvez vos favoris dans une seule conversation.
 
-[![CI](https://github.com/ZEBDA1/TGBBot/actions/workflows/ci.yml/badge.svg)](https://github.com/ZEBDA1/TGBBot/actions/workflows/ci.yml)
+[![CI](https://github.com/ZEBDA1/ImmoAlert/actions/workflows/ci.yml/badge.svg)](https://github.com/ZEBDA1/ImmoAlert/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.11_%7C_3.12-3776AB?logo=python&logoColor=white)
 ![aiogram](https://img.shields.io/badge/Telegram-aiogram_3-26A5E4?logo=telegram&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
@@ -20,7 +20,7 @@ Surveillez plusieurs portails, définissez vos critères et retrouvez vos favori
 
 ---
 
-Chercher un logement finit souvent par ressembler à une tournée de sites : les mêmes filtres, les mêmes annonces, plusieurs onglets à rafraîchir. **TGBBot rassemble cette veille dans Telegram.** Chaque utilisateur configure sa recherche ; le bot collecte les annonces, vérifie les critères, repère les doublons et prépare les alertes.
+Chercher un logement finit souvent par ressembler à une tournée de sites : les mêmes filtres, les mêmes annonces, plusieurs onglets à rafraîchir. **ImmoAlert rassemble cette veille dans Telegram.** Chaque utilisateur configure sa recherche ; le bot collecte les annonces, vérifie les critères, repère les doublons et prépare les alertes.
 
 Le projet se déploie sur votre serveur avec Docker Compose. Il intègre **8 connecteurs**, des filtres nommés, des favoris, une file d’alertes persistante et des outils de diagnostic accessibles aux administrateurs.
 
@@ -32,7 +32,7 @@ Le projet se déploie sur votre serveur avec Docker Compose. Il intègre **8 con
 
 ## Fonctionnalités
 
-| Fonction | Ce que propose TGBBot |
+| Fonction | Ce que propose ImmoAlert |
 | :--- | :--- |
 | **🎯 Une recherche à votre mesure** | Ville, code postal, prix minimum et maximum, surface, pièces, type de bien et budget avec charges. Rayon géographique avec le géocodage optionnel. |
 | **🛰️ Plusieurs sources** | Connecteurs Leboncoin, SeLoger, PAP, ParuVendu, Entreparticuliers, Logic-Immo, Rentola et OuestFrance-Immo. |
@@ -59,8 +59,8 @@ Les connecteurs sont présents dans le code ; leur disponibilité dépend des si
 **Prérequis : Git et Docker avec le plugin Compose.** L’image installe Python 3.11, Chromium, Node.js 22 et Firecrawl CLI 1.26.22.
 
 ```bash
-git clone https://github.com/ZEBDA1/TGBBot.git
-cd TGBBot
+git clone https://github.com/ZEBDA1/ImmoAlert.git
+cd ImmoAlert
 cp .env.example .env
 mkdir -p storage
 ```
@@ -160,7 +160,7 @@ python3 -m unittest discover -s tests -v
 
 La suite comprend actuellement **96 tests** : parsing des annonces, correspondance géographique, scoring, qualité, déduplication, filtres Premium, reprise des alertes et isolation des collectes lentes.
 
-La [CI GitHub Actions](https://github.com/ZEBDA1/TGBBot/actions/workflows/ci.yml) exécute ces tests sous **Python 3.11 et 3.12**, construit l’image Docker et vérifie l’import de l’application, la création d’une base neuve et le healthcheck sans accès réseau. [Périmètre et limites de validation](docs/VALIDATION.md).
+La [CI GitHub Actions](https://github.com/ZEBDA1/ImmoAlert/actions/workflows/ci.yml) exécute ces tests sous **Python 3.11 et 3.12**, construit l’image Docker et vérifie l’import de l’application, la création d’une base neuve et le healthcheck sans accès réseau. [Périmètre et limites de validation](docs/VALIDATION.md).
 
 ## Données et configuration
 
