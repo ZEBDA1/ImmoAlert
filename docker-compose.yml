@@ -1,0 +1,24 @@
+services:
+  tgbbot:
+    build: .
+    container_name: tgbbot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: sqlite:////app/storage/data.db
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: UTF-8
+      USE_SELENIUM_FALLBACK: "false"
+      TZ: UTC
+    volumes:
+      - ./storage:/app/storage
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck.py"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    command: ["python", "main.py"]
