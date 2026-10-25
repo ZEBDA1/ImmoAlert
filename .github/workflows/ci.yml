@@ -38,7 +38,7 @@ jobs:
   docker:
     name: Docker image
     runs-on: ubuntu-latest
-    needs: tests
+    needs: [tests, frontend]
     steps:
       - uses: actions/checkout@v4
       - name: Build image
@@ -49,4 +49,36 @@ jobs:
             -e BOT_TOKEN=123456:ci-test-token \
             -e DATABASE_URL=sqlite:// \
             tgbbot:ci python -c \
-            'import main; from database.session import init_db; from scripts.healthcheck import main as check; init_db(); raise SystemExit(check())'
+            'import main; from pathlib import Path; from database.session import init_db; from scripts.healthcheck import main as check; init_db(); assert Path("/app/web_dist/index.html").is_file(); raise SystemExit(check())'
+
+  frontend:
+    name: Website and Plesk upload
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install frontend dependencies
+        run: npm --prefix web ci --no-audit --no-fund
+      - name: Check TypeScript and build website
+        run: npm --prefix web run build
+      - name: Prepare Plesk upload
+        run: python3 scripts/package_plesk.py
+      - name: Check PHP gateway syntax
+        run: |
+          docker run --rm -v "$PWD/deploy/plesk:/work:ro" php:8.3-cli-alpine php -l /work/httpdocs/api/index.php
+          docker run --rm -v "$PWD/deploy/plesk:/work:ro" php:8.3-cli-alpine php -l /work/private/immoalert.example.php
+      - name: Keep the tested upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: immoalert-plesk
+          path: |
+            dist/immoalert-plesk.zip
+            dist/immoalert-plesk.zip.sha256
+          retention-days: 14

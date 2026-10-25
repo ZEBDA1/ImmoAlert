@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import json
 from dataclasses import dataclass, field
 from dotenv import load_dotenv
 
@@ -33,6 +34,19 @@ def env_str(name: str, default: str = "") -> str:
 
 def env_optional_str(name: str) -> str | None:
     return _raw_env(name)
+
+
+def env_secret_list(name: str) -> tuple[str, ...]:
+    value = _raw_env(name)
+    if not value:
+        return ()
+    try:
+        parts = json.loads(value) if value.startswith("[") else re.split(r"[,;\n]+", value)
+        if not isinstance(parts, list) or any(not isinstance(part, str) for part in parts):
+            raise ValueError
+    except (ValueError, TypeError):
+        raise RuntimeError(f"{name} must be a JSON string array or comma-separated keys.") from None
+    return tuple(dict.fromkeys(part.strip() for part in parts if part.strip()))
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -162,11 +176,11 @@ class Settings:
     min_listing_quality_fields: int = field(default_factory=lambda: env_int("MIN_LISTING_QUALITY_FIELDS", 2, min_value=1, max_value=5))
 
     # --- Firecrawl CLI bridge -------------------------------------------------
-    # Renders anti-bot protected portals (Leboncoin, SeLoger, ...) with a stealth
-    # browser and returns structured JSON. Falls back to HTTP/Playwright when the
-    # CLI is missing, disabled or unauthenticated.
+    # Backup renderer for primary Scrapling failures. Explicit credentials are
+    # rotated within one deadline; account limits and shared credits still apply.
     firecrawl_enabled: bool = field(default_factory=lambda: env_bool("FIRECRAWL_ENABLED", True))
-    firecrawl_api_key: str | None = field(default_factory=lambda: env_optional_str("FIRECRAWL_API_KEY"))
+    firecrawl_api_key: str | None = field(default_factory=lambda: env_optional_str("FIRECRAWL_API_KEY"), repr=False)
+    firecrawl_api_keys: tuple[str, ...] = field(default_factory=lambda: env_secret_list("FIRECRAWL_API_KEYS"), repr=False)
     firecrawl_cli_path: str | None = field(default_factory=lambda: env_optional_str("FIRECRAWL_CLI_PATH"))
     firecrawl_timeout_seconds: int = field(
         default_factory=lambda: env_seconds("FIRECRAWL_TIMEOUT_SECONDS", 90, min_value=15, max_value=300)
@@ -184,6 +198,28 @@ class Settings:
     # CLI accepts only "auto" or "basic"; utils.firecrawl coerces anything else.
     firecrawl_proxy: str = field(default_factory=lambda: env_str("FIRECRAWL_PROXY", "auto"))
 
+    # Initial value only: the admin panel persists its override in the database.
+    scrapling_enabled: bool = field(default_factory=lambda: env_bool("SCRAPLING_ENABLED", True))
+    scrapling_timeout_seconds: int = field(
+        default_factory=lambda: env_seconds("SCRAPLING_TIMEOUT_SECONDS", 25, min_value=5, max_value=120)
+    )
+    scrapling_browser_path: str | None = field(default_factory=lambda: env_optional_str("SCRAPLING_BROWSER_PATH"))
+
+    flashproxy_enabled: bool = field(default_factory=lambda: env_bool("FLASHPROXY_ENABLED", False))
+    flashproxy_api_key: str | None = field(default_factory=lambda: env_optional_str("FLASHPROXY_API_KEY"), repr=False)
+    flashproxy_plan_id: str | None = field(default_factory=lambda: env_optional_str("FLASHPROXY_PLAN_ID"))
+    flashproxy_country: str = field(default_factory=lambda: env_str("FLASHPROXY_COUNTRY", "FR"))
+    flashproxy_sticky_minutes: int = field(default_factory=lambda: env_int("FLASHPROXY_STICKY_MINUTES", 10, min_value=1, max_value=120))
+    flashproxy_timeout_seconds: int = field(default_factory=lambda: env_seconds("FLASHPROXY_TIMEOUT_SECONDS", 12, min_value=3, max_value=30))
+
+    web_site_url: str | None = field(default_factory=lambda: env_optional_str("WEB_SITE_URL"))
+    web_enabled: bool = field(default_factory=lambda: env_bool("WEB_ENABLED", False))
+    web_bind_host: str = field(default_factory=lambda: env_str("WEB_BIND_HOST", "0.0.0.0"))
+    web_port: int = field(default_factory=lambda: env_int("WEB_PORT", 8088, min_value=1, max_value=65535))
+    web_dist_path: str = field(default_factory=lambda: env_str("WEB_DIST_PATH", "/app/web_dist"))
+    web_proxy_origin: str | None = field(default_factory=lambda: env_optional_str("WEB_PROXY_ORIGIN"))
+    web_proxy_secret: str | None = field(default_factory=lambda: env_optional_str("WEB_PROXY_SECRET"), repr=False)
+
     ai_scam_enabled: bool = field(default_factory=lambda: env_bool("AI_SCAM_ENABLED", False))
     ai_scam_endpoint: str | None = field(default_factory=lambda: env_optional_str("AI_SCAM_ENDPOINT"))
     ai_scam_api_key: str | None = field(default_factory=lambda: env_optional_str("AI_SCAM_API_KEY"))
@@ -198,6 +234,13 @@ class Settings:
         self.validate()
 
     def validate(self) -> None:
+        if self.web_proxy_origin or self.web_proxy_secret:
+            from urllib.parse import urlsplit
+            parsed=urlsplit(self.web_proxy_origin or "")
+            if parsed.scheme!="https" or not parsed.hostname or parsed.username or parsed.path or parsed.query or parsed.fragment:
+                raise RuntimeError("WEB_PROXY_ORIGIN must be an HTTPS origin without a trailing slash or path.")
+            if not self.web_proxy_secret or len(self.web_proxy_secret)<32:
+                raise RuntimeError("WEB_PROXY_SECRET must contain at least 32 characters.")
         if not self.bot_token:
             raise RuntimeError("BOT_TOKEN is not set. Configure it in .env or environment.")
         if not self.database_url:
@@ -206,6 +249,8 @@ class Settings:
             raise RuntimeError("PROXY_URL must start with http://, https:// or socks5://.")
         if self.scheduler_source_backoff_min_seconds > self.scheduler_source_backoff_max_seconds:
             raise RuntimeError("SCHEDULER_SOURCE_BACKOFF_MIN_SECONDS must be <= SCHEDULER_SOURCE_BACKOFF_MAX_SECONDS.")
+        if not re.fullmatch(r"[A-Za-z]{2}", self.flashproxy_country):
+            raise RuntimeError("FLASHPROXY_COUNTRY must be a two-letter country code.")
 
 
 settings = Settings()

@@ -1,62 +1,95 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="ImmoAlert — Votre radar immobilier sur Telegram" width="100%" />
+<a href="https://immoalert.work.gd"><img src="docs/assets/banner.svg" alt="ImmoAlert — Le bon signal immobilier, sur le web et dans Telegram" width="100%" /></a>
 
 # ImmoAlert
 
-**Les annonces qui vous intéressent. Directement dans Telegram.**
-
-Surveillez plusieurs portails, définissez vos critères et retrouvez vos favoris dans une seule conversation.
+**Un seul flux pour repérer les biens, comparer leurs publications et recevoir les bonnes alertes.**
 
 [![CI](https://github.com/ZEBDA1/ImmoAlert/actions/workflows/ci.yml/badge.svg)](https://github.com/ZEBDA1/ImmoAlert/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.11_%7C_3.12-3776AB?logo=python&logoColor=white)
-![aiogram](https://img.shields.io/badge/Telegram-aiogram_3-26A5E4?logo=telegram&logoColor=white)
+![React](https://img.shields.io/badge/React-19-10110f?logo=react&logoColor=dcff43)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
-![Self hosted](https://img.shields.io/badge/Auto--h%C3%A9berg%C3%A9-8b5cf6?logo=serverfault&logoColor=white)
+![Accès](https://img.shields.io/badge/Acc%C3%A8s-sur_invitation-dcff43?labelColor=10110f&color=dcff43)
 
-[Aperçu](#aperçu) · [Fonctionnalités](#fonctionnalités) · [Démarrage rapide](#démarrage-rapide) · [Architecture](#architecture) · [Documentation](#documentation)
+**[Ouvrir le site → immoalert.work.gd](https://immoalert.work.gd)**
+
+[Aperçu](#aperçu) · [Fonctionnalités](#fonctionnalités) · [Installation](#installation) · [Plesk](docs/PLESK.md) · [Documentation](#documentation)
 
 </div>
 
----
+ImmoAlert rassemble les annonces de **huit plateformes immobilières** dans un site et un bot Telegram. Chaque compte conserve ses recherches et ses favoris ; les publications reconnues comme un même bien partagent une fiche et un historique d’alerte.
 
-Chercher un logement finit souvent par ressembler à une tournée de sites : les mêmes filtres, les mêmes annonces, plusieurs onglets à rafraîchir. **ImmoAlert rassemble cette veille dans Telegram.** Chaque utilisateur configure sa recherche ; le bot collecte les annonces, vérifie les critères, repère les doublons et prépare les alertes.
-
-Le projet se déploie sur votre serveur avec Docker Compose. Il intègre **8 connecteurs**, des filtres nommés, des favoris, une file d’alertes persistante et des outils de diagnostic accessibles aux administrateurs.
+Le site fonctionne avec un **identifiant créé par un administrateur**, sans inscription publique. Telegram reste facultatif : il permet de recevoir les alertes et de retrouver ses repérages dans le bot.
 
 ## Aperçu
 
-<img src="docs/assets/telegram-preview.svg" alt="Illustration du panneau Telegram et d’une alerte immobilière avec prix, surface, score et boutons de favoris" width="100%" />
+### Le flux et les recherches
 
-*Illustration de la conversation et de ses commandes, avec une annonce fictive. Le format des alertes et les libellés des boutons reprennent le code du bot ; ce visuel est une maquette, pas une capture de Telegram. [Provenance des visuels](docs/assets/README.md).*
+<img src="docs/assets/website-demo.png" alt="Interface ImmoAlert : annonces de démonstration, filtres, recherches enregistrées et favoris" width="100%" />
+
+### Les détails d’un bien et la version mobile
+
+<table>
+<tr>
+<td width="72%"><img src="docs/assets/listing-demo.png" alt="Fiche détaillée : galerie, description, caractéristiques et publications d’un bien fictif" width="100%" /></td>
+<td width="28%"><img src="docs/assets/mobile-demo.png" alt="Le flux ImmoAlert sur mobile avec des annonces fictives" width="100%" /></td>
+</tr>
+</table>
+
+### Le poste de contrôle administrateur
+
+<img src="docs/assets/admin-demo.png" alt="Console administrateur : progression et diagnostic détaillé des huit sources" width="100%" />
+
+<details>
+<summary>Voir le trafic API et l’aperçu Telegram</summary>
+
+<img src="docs/assets/traffic-demo.png" alt="Supervision des requêtes API : comptes fictifs, routes, codes HTTP et temps de réponse" width="100%" />
+
+<img src="docs/assets/telegram-preview.svg" alt="Illustration d’une alerte Telegram avec favoris, lien d’origine et bouton Plus d’informations" width="100%" />
+
+</details>
+
+*Les captures proviennent de l’interface exécutée sur une base de démonstration isolée. Comptes, biens, illustrations et métriques sont fictifs ; elles ne montrent aucune donnée de production. L’aperçu Telegram est une illustration vectorielle. [Origine et reproduction des visuels](docs/assets/README.md).*
 
 ## Fonctionnalités
 
-| Fonction | Ce que propose ImmoAlert |
+| | Ce que propose ImmoAlert |
 | :--- | :--- |
-| **🎯 Une recherche à votre mesure** | Ville, code postal, prix minimum et maximum, surface, pièces, type de bien et budget avec charges. Rayon géographique avec le géocodage optionnel. |
-| **🛰️ Plusieurs sources** | Connecteurs Leboncoin, SeLoger, PAP, ParuVendu, Entreparticuliers, Logic-Immo, Rentola et OuestFrance-Immo. |
-| **🔔 Des alertes lisibles** | Prix, surface, localisation, source, score de correspondance, photo lorsqu’elle est disponible et lien vers l’annonce. |
-| **❤️ Des favoris à retrouver** | Enregistrement depuis une alerte, retrait et tri par date, prix ou surface. |
-| **👥 Plusieurs utilisateurs** | Filtres propres à chaque compte, mode Free à alertes différées et mode Premium avec plusieurs filtres nommés. |
-| **🔁 Une veille qui reprend** | Alertes enregistrées en base, nouvelle tentative après une erreur Telegram temporaire et suivi des annonces déjà envoyées. |
-| **⚡ Une conversation réactive** | Collectes exécutées dans des threads dédiés pour préserver les ressources utilisées par Telegram, même lorsqu’un portail répond lentement. |
-| **🧠 Une IA facultative** | Création d’un filtre en langage naturel via un endpoint configurable, avec un repli local de parsing. Les alertes utilisent des règles locales pour les signaux d’arnaque. |
-| **🛠️ Des diagnostics intégrés** | État des sources, erreurs, délais, volumes collectés, test d’un connecteur et scan complet depuis les commandes admin. |
+| **Un flux commun** | Annonces récentes, recherche par ville ou mot-clé, filtres de prix, surface et pièces, tri et affichage en grille ou en liste. |
+| **Un bien, plusieurs publications** | Comparaison de la localisation, du prix, de la surface et des pièces, avec une photo commune ou une description distinctive pour confirmer un regroupement. Les liens de chaque plateforme sont conservés. |
+| **Des fiches détaillées** | Description complète récupérée, caractéristiques publiées, galerie de toutes les images collectées, miniatures et agrandissement sur le site. |
+| **Une localisation lisible** | Carte du bien avec les coordonnées du portail, ou centre de commune explicitement présenté comme approximatif. |
+| **Telegram à la demande** | Alertes avec photo lorsqu’elle est disponible, favoris et bouton **Plus d’informations**. Les longues descriptions sont paginées ; les photos supplémentaires se consultent sur le site. |
+| **Des comptes administrés** | Création d’un identifiant, mot de passe généré une seule fois, rôle administrateur facultatif, Premium, désactivation et réinitialisation avec révocation des sessions. |
+| **Une console de suivi** | Sources activées, collectes en cours, zones traitées, volumes bruts/normalisés/rejetés/uniques, nouvelles annonces, erreurs, délais et temporisations. |
+| **Du trafic API en direct** | Requêtes en cours et récentes, compte, méthode, route, action, code HTTP et durée. Aucun mot de passe, cookie, corps de requête ni paramètre d’URL n’est enregistré. |
+| **Une veille persistante** | SQLite, favoris, file d’alertes, historique des envois et reprise après erreur Telegram temporaire. |
+| **Plusieurs déploiements** | Bot et site avec Docker Compose ; site sur Plesk mutualisé avec passerelle PHP vers le backend, y compris avec un tunnel HTTPS sans ouverture de ports sur la box. |
 
-### Sources et disponibilité
+Les détails, photos et coordonnées dépendent des données réellement fournies par les portails. Une protection anti-bot peut bloquer une collecte. Des critères identiques ne suffisent pas à fusionner deux biens ; les vérifications restent prudentes. [Architecture et limites](docs/ARCHITECTURE.md).
 
-| Connecteurs | Collecte |
-| :--- | :--- |
-| **Leboncoin · SeLoger** | Firecrawl CLI pour le rendu et l’extraction structurée ; chemins HTTP ou navigateur en repli. |
-| **PAP · ParuVendu · Entreparticuliers** | Extraction HTTP et parseurs propres à chaque portail. |
-| **Logic-Immo · Rentola · OuestFrance-Immo** | Connecteurs dédiés, intégrés au même cycle de normalisation et de filtrage. |
+### Les plateformes
 
-Les connecteurs sont présents dans le code ; leur disponibilité dépend des sites, des protections anti-bot, du réseau et des quotas Firecrawl. Un connecteur peut renvoyer zéro résultat. `/debug_sources` permet de voir ce qui a réellement été collecté.
+**Leboncoin · SeLoger · PAP · ParuVendu · Entreparticuliers · Logic-Immo · Rentola · OuestFrance-Immo**
 
-## Démarrage rapide
+Les chemins HTML utilisent **Scrapling avec Chromium** comme moteur principal. **Firecrawl** prend le relais lorsque nécessaire ; plusieurs clés peuvent être configurées. **FlashProxy** est optionnel. L’administrateur contrôle les sources et le moteur principal depuis le site ou Telegram. [Configuration des collecteurs](docs/CONFIGURATION.md).
 
-**Prérequis : Git et Docker avec le plugin Compose.** L’image installe Python 3.11, Chromium, Node.js 22 et Firecrawl CLI 1.26.22.
+### Free et Premium
+
+| | Free | Premium |
+| :--- | :--- | :--- |
+| Recherches | Une recherche principale | Plusieurs recherches nommées |
+| Site, fiches, galerie et favoris | Oui | Oui |
+| Telegram | Facultatif | Facultatif |
+| Alertes Telegram | Différées, 5 minutes par défaut | Dès le traitement de l’annonce |
+| Filtre en langage naturel | — | `/ai_filter` |
+
+Le Premium est attribué par un administrateur. Aucun paiement automatique n’est intégré. Le délai d’alerte commence après collecte et traitement ; il ne garantit pas un délai de détection sur les portails.
+
+## Installation
+
+**Prérequis : Git et Docker avec le plugin Compose.** Le dépôt contient le backend **et** les sources du site dans `web/`. L’image construit le frontend et inclut Python 3.11, Chromium, Node.js 22 et Firecrawl CLI.
 
 ```bash
 git clone https://github.com/ZEBDA1/ImmoAlert.git
@@ -65,119 +98,101 @@ cp .env.example .env
 mkdir -p storage
 ```
 
-Renseignez les valeurs de votre instance dans `.env` :
+Renseigner les valeurs propres à l’instance dans `.env` :
 
 ```dotenv
-BOT_TOKEN=votre_token_botfather
-ADMIN_TELEGRAM_IDS=123456789
-FIRECRAWL_API_KEY=votre_cle_firecrawl
+BOT_TOKEN=jeton_obtenu_aupres_de_BotFather
+ADMIN_TELEGRAM_IDS=identifiant_telegram_de_l_administrateur
+FIRECRAWL_API_KEY=cle_facultative_pour_le_secours
 ```
 
-- **`BOT_TOKEN`** : jeton créé avec [BotFather](https://t.me/BotFather).
-- **`ADMIN_TELEGRAM_IDS`** : votre identifiant Telegram ; plusieurs identifiants peuvent être séparés par des virgules. La commande `/my_id` affiche le vôtre.
-- **`FIRECRAWL_API_KEY`** : clé de votre compte [Firecrawl](https://www.firecrawl.dev/), recommandée pour Leboncoin et SeLoger. Le mode sans clé dispose d’un quota limité.
+Puis démarrer :
 
 ```bash
 docker compose up -d --build
 docker compose ps
-docker compose logs -f tgbbot
 ```
 
-Ouvrez votre bot dans Telegram, envoyez **`/start`**, puis choisissez **« Configurer mes filtres »**. Les annonces existantes sont recherchées après l’enregistrement du filtre, puis la veille continue en arrière-plan.
+Le bot utilise le polling Telegram. Ouvrir sa conversation et envoyer `/start` pour définir les critères. La commande `/my_id` affiche l’identifiant Telegram.
 
-**Après une modification de `.env` :**
+### Activer son propre site
+
+Le site est désactivé par défaut. Pour l’activer sur le serveur :
+
+```dotenv
+WEB_ENABLED=true
+WEB_SITE_URL=http://localhost:8088
+WEB_PORT=8088
+WEB_DIST_PATH=/app/web_dist
+```
 
 ```bash
-docker compose up -d --force-recreate
+docker compose up -d --force-recreate tgbbot
+docker compose exec tgbbot python scripts/create_web_admin.py --login administrateur
 ```
 
-La base SQLite persiste dans `storage/data.db`. Le [guide de déploiement](docs/DEPLOYMENT.md) détaille les mises à jour, les sauvegardes et les diagnostics. Pour travailler sans Docker, consultez le [guide de développement](docs/DEVELOPMENT.md).
+Le mot de passe généré s’affiche une seule fois. Le site est accessible sur `http://localhost:8088` **depuis la machine qui héberge Docker**. Compose publie ce port sur la boucle locale ; pour un domaine HTTPS distant, suivre le [guide web](docs/WEB.md) et configurer l’origine publique appropriée. Un administrateur Telegram configuré peut aussi utiliser la connexion Telegram pour créer ses premiers accès dans **Accès**.
 
-## Utilisation
+### Plesk mutualisé, sans SSH
 
-### Dans Telegram
+Plesk héberge le frontend compilé et sa passerelle PHP. Le backend, le bot et les collecteurs restent sur un serveur permanent, joignable en HTTPS. La passerelle conserve son secret en dehors de `httpdocs`.
 
-| Commande | Action |
-| :--- | :--- |
-| `/start` · `/status` | Ouvrir le panneau, réactiver les alertes ou consulter l’état du compte. |
-| `/set_filters` | Créer ou remplacer le filtre principal avec l’assistant guidé. |
-| `/manage_filters` · `/edit_filters [nom]` | Consulter et modifier les recherches enregistrées. |
-| `/search_now [nom]` | Rechercher les annonces existantes pour un filtre. |
-| `/favorites [recent\|price\|surface]` | Retrouver les annonces enregistrées et choisir leur tri. |
-| `/stop` | Mettre les alertes en pause. |
-| `/ai_filter <description>` | Préparer un filtre à partir d’une phrase, pour les comptes Premium. |
+Pour préparer l’archive sur le poste de développement, avec Node.js 22.12+ :
 
-Exemple de description : **« Appartement à Paris 11, 2 pièces, 35 m² minimum, 1 200 € maximum »**.
+```bash
+npm --prefix web ci
+python3 scripts/package_plesk.py
+```
 
-### Free et Premium
+L’archive `dist/immoalert-plesk.zip` se dépose depuis le gestionnaire de fichiers Plesk. Elle ne contient ni base, ni identifiant de production, ni `.env`. [Installation Plesk et option Tailscale Funnel sans ouverture de ports](docs/PLESK.md).
 
-| | Free | Premium |
-| :--- | :--- | :--- |
-| Recherches | Un filtre principal | Plusieurs filtres nommés |
-| Alertes | Différées de 5 minutes par défaut | Envoi dès le traitement de l’annonce |
-| Favoris | Oui | Oui |
-| Filtre en langage naturel | — | `/ai_filter` |
-
-Les accès Premium sont gérés par un administrateur avec `/grant_premium <id> [durée]` et `/revoke_premium <id>`. Le projet n’intègre pas de paiement automatique. Les délais de collecte dépendent du réseau, des sources et des quotas ; les modes Free et Premium règlent le traitement des alertes après collecte.
+Une archive déjà construite et son empreinte SHA-256 sont également disponibles dans les [versions GitHub](https://github.com/ZEBDA1/ImmoAlert/releases/latest).
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    User["Utilisateur Telegram"] --> Bot["aiogram · commandes et filtres"]
-    Bot --> DB[("SQLite / SQLAlchemy")]
-    Scheduler["Veille en arrière-plan"] --> Workers["Threads de collecte dédiés"]
-    Workers --> HTTP["Connecteurs HTTP / navigateur"]
-    Workers --> FC["Firecrawl CLI"]
-    HTTP --> Normalize["Normalisation et qualité"]
-    FC --> Normalize
-    Normalize --> Match["Déduplication et critères utilisateur"]
-    DB --> Match
-    Match --> DB
-    Match --> Queue["Alertes immédiates ou différées"]
-    Queue --> Bot
-    Bot --> User
+    Web["Site React · recherches et fiches"] --> API["API Python · sessions et droits"]
+    Plesk["Plesk · passerelle PHP signée"] --> API
+    Telegram["Bot Telegram · alertes et commandes"] --> DB[("Profils · SQLite")]
+    API --> DB
+    Collect["Collectes · 8 sources"] --> Render["Scrapling · secours Firecrawl"]
+    Render --> Quality["Qualité · détails · regroupement des publications"]
+    Quality --> DB
+    DB --> Queue["Critères · file d’alertes"]
+    Queue --> Telegram
+    API --> Admin["Console · sources et trafic API"]
 ```
 
-```text
-bot/          Commandes Telegram, claviers et assistant de configuration
-scraper/      Connecteurs, normalisation et contrôles de qualité
-services/     Scheduler, matching, alertes, signaux d’arnaque et IA
-database/     Modèles SQLAlchemy, migrations additives et repository
-utils/        Transport HTTP, client Firecrawl, parsing, cache et géocodage
-tests/        Tests de régression avec sources et réseau simulés
-docs/         Guides de configuration, déploiement, architecture et visuels
-```
+Les profils, recherches et favoris sont partagés entre site et bot. Les comptes sans Telegram utilisent le site et ne reçoivent pas de messages Telegram. Une liaison approuvée dans le bot regroupe les données avec le profil Telegram existant. [Détails techniques](docs/ARCHITECTURE.md).
 
-Le scheduler conserve les résultats des collectes pour alimenter les diagnostics. Les alertes et leurs métadonnées sont enregistrées en base. Les explications de correspondance et les signaux d’arnaque aident à lire une annonce ; ils restent indicatifs. [Détails de l’architecture](docs/ARCHITECTURE.md).
-
-## Tests
+## Validation
 
 ```bash
 python3 -m pip install -r requirements.txt
 python3 -m unittest discover -s tests -v
+npm --prefix web ci
+npm --prefix web run build
 ```
 
-La suite comprend actuellement **96 tests** : parsing des annonces, correspondance géographique, scoring, qualité, déduplication, filtres Premium, reprise des alertes et isolation des collectes lentes.
+**216 tests de régression** couvrent les collecteurs, le matching, les doublons, les alertes, l’authentification, les droits, les migrations et les API. Les appels externes y sont simulés. Des vérifications navigateur sur ordinateur/mobile et un essai réel de la passerelle PHP avec TLS complètent la suite. [Périmètre et limites de validation](docs/VALIDATION.md).
 
-La [CI GitHub Actions](https://github.com/ZEBDA1/ImmoAlert/actions/workflows/ci.yml) exécute ces tests sous **Python 3.11 et 3.12**, construit l’image Docker et vérifie l’import de l’application, la création d’une base neuve et le healthcheck sans accès réseau. [Périmètre et limites de validation](docs/VALIDATION.md).
-
-## Données et configuration
-
-Les comptes Telegram, filtres, favoris et historiques d’alertes sont conservés dans la base de votre instance. Les messages d’alerte transitent par Telegram. Firecrawl reçoit les URL des recherches qui lui sont confiées ; les appels à un service IA personnel et au géocodage restent optionnels.
-
-Les fichiers `.env`, les bases, `storage/`, les caches et les identifiants locaux sont exclus du dépôt et du contexte Docker. Le contrôle de santé Docker vérifie la configuration et la base locale ; l’authentification Telegram et la disponibilité des portails se vérifient dans les journaux et les commandes admin.
+La CI teste Python 3.11/3.12, le build TypeScript/Vite, l’archive Plesk, la syntaxe PHP et l’image Docker. Les résultats sont accessibles dans [GitHub Actions](https://github.com/ZEBDA1/ImmoAlert/actions).
 
 ## Documentation
 
 | Guide | Contenu |
 | :--- | :--- |
-| [Configuration](docs/CONFIGURATION.md) | Variables d’environnement, Firecrawl, quotas, géocodage et IA facultative |
-| [Déploiement](docs/DEPLOYMENT.md) | Docker Compose, mises à jour, sauvegardes et dépannage |
-| [Développement](docs/DEVELOPMENT.md) | Installation Python, dépendances locales et commandes de test |
-| [Architecture](docs/ARCHITECTURE.md) | Collecte, matching, persistance et envoi des alertes |
-| [Validation](docs/VALIDATION.md) | Couverture des tests et limites des vérifications automatisées |
-| [Visuels](docs/assets/README.md) | Origine de la bannière et des illustrations du README |
+| [Configuration](docs/CONFIGURATION.md) | Variables d’environnement, collecteurs, proxys, quotas et géocodage |
+| [Site et administration](docs/WEB.md) | Connexion, comptes, rôles, données partagées et supervision |
+| [Plesk](docs/PLESK.md) | Archive prête à envoyer, passerelle PHP et backend HTTPS |
+| [Déploiement](docs/DEPLOYMENT.md) | Docker, mises à jour, sauvegardes et dépannage |
+| [Développement](docs/DEVELOPMENT.md) | Backend Python, frontend, tests et ajout d’un connecteur |
+| [Architecture](docs/ARCHITECTURE.md) | Collecte, déduplication, persistance, accès et alertes |
+| [Validation](docs/VALIDATION.md) | Tests, contrôles d’intégration et limites |
+| [Visuels](docs/assets/README.md) | Captures de démonstration et illustrations vectorielles |
+
+Les fichiers `.env`, les mots de passe générés, les clés API, les sessions, les bases et `storage/` restent locaux. Les valeurs de configuration livrées sont des exemples. Les alertes transitent par Telegram si un compte est relié ; les URL transmises à un collecteur externe sont décrites dans la [configuration](docs/CONFIGURATION.md).
 
 ---
 
@@ -185,6 +200,6 @@ Les fichiers `.env`, les bases, `storage/`, les caches et les identifiants locau
 
 **Conçu par [ZEBDA](https://github.com/ZEBDA1).**
 
-Python · Telegram · Veille immobilière · Auto-hébergement
+[immoalert.work.gd](https://immoalert.work.gd) · Python · React · Telegram · Auto-hébergement
 
 </div>

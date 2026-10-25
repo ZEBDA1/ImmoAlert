@@ -134,6 +134,7 @@ class AlertDeliveryTests(unittest.TestCase):
 
     def test_start_clears_unfinished_filter_wizard(self):
         msg = SimpleNamespace(
+            text="/start",
             from_user=SimpleNamespace(id=self.user.telegram_id, username="alice"), answer=AsyncMock(),
         )
         state = AsyncMock()

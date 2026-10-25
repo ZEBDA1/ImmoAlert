@@ -1,4 +1,18 @@
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import (
+    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove,
+    InlineKeyboardMarkup, InlineKeyboardButton,
+)
+
+
+def scrapling_admin_kb(*, enabled: bool) -> InlineKeyboardMarkup:
+    action = "Désactiver" if enabled else "Activer"
+    target = "off" if enabled else "on"
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text=f"🕷️ {action} Scrapling (principal)",
+            callback_data=f"admin:scrapling:{target}",
+        )
+    ]])
 
 
 def yes_no_kb() -> ReplyKeyboardMarkup:

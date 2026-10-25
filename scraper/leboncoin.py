@@ -1,16 +1,4 @@
-"""Leboncoin rental scraper.
-
-Leboncoin serves its result pages through a heavily protected Next.js app
-(DataDome). A plain ``requests`` call or even Playwright usually receives an
-interstitial, which is why the previous selector-based implementation silently
-returned nothing.
-
-The primary path now goes through the **Firecrawl** CLI: it renders the page in
-a stealth browser and returns a JSON payload shaped by
-:data:`scraper.firecrawl_helpers.LISTING_SCHEMA`. The historical HTML / Next.js
-parsing is kept as a last-resort fallback so the source degrades gracefully when
-Firecrawl is disabled or out of credits.
-"""
+"""Leboncoin rentals: Scrapling HTML/Next.js first, Firecrawl extraction as backup."""
 
 from __future__ import annotations
 
@@ -31,8 +19,9 @@ from scraper.firecrawl_helpers import (
 )
 from utils.firecrawl import firecrawl_available, get_client
 from utils.hash import hash_str
-from utils.http import fetch_html, http_client
+from utils.http import fetch_html, http_client, is_probably_blocked
 from utils.text import parse_int, parse_surface_m2
+from utils.text import parse_price_eur
 
 log = logging.getLogger(__name__)
 
@@ -126,7 +115,7 @@ class LeboncoinScraper(BaseScraper):
 
     # -- legacy HTML fallback ---------------------------------------------
     def _legacy_fetch(self, city: Optional[str], postal_code: Optional[str]) -> list[ScrapedListing]:
-        """Old selector-based path, kept as a fallback only."""
+        """Parse primary Scrapling HTML and native Next.js data."""
         cookie = os.getenv("LEBONCOIN_COOKIE", "").strip()
         extra_headers = {"Cookie": cookie} if cookie else None
         results: list[ScrapedListing] = []
@@ -134,26 +123,16 @@ class LeboncoinScraper(BaseScraper):
         for base_url in self._candidate_urls(city, postal_code):
             for page in range(1, 4):
                 url = f"{base_url}&page={page}" if "?" in base_url else f"{base_url}?page={page}"
-                html: Optional[str] = None
-                try:
-                    resp = http_client.get(
-                        url,
-                        referer="https://www.leboncoin.fr/",
-                        headers=extra_headers,
-                        retries=1,
-                        allow_statuses={403, 404, 429},
-                    )
-                    if resp.status_code == 200:
-                        html = resp.text
-                except Exception:
-                    html = None
-
-                if not html:
-                    html = fetch_html(url, referer="https://www.leboncoin.fr/")
+                html = fetch_html(url, referer="https://www.leboncoin.fr/", headers=extra_headers)
                 if not html:
                     break
 
                 soup = BeautifulSoup(html, "html.parser")
+                # Current cards use separate overlay anchors. Their native
+                # Next.js payload contains the scoped facts and photo URLs.
+                structured = self._listings_from_next_data(soup)
+                if structured:
+                    return structured[:_MAX_LISTINGS]
                 cards = (
                     soup.select("a[data-qa-id='aditem_container']")
                     or soup.select("a[data-test-id='ad-card-link']")
@@ -165,8 +144,6 @@ class LeboncoinScraper(BaseScraper):
                         listing = self._listing_from_anchor(card)
                         if listing:
                             results.append(listing)
-                else:
-                    results.extend(self._listings_from_next_data(soup))
 
                 if not results:
                     break
@@ -269,8 +246,12 @@ class LeboncoinScraper(BaseScraper):
                 continue
             if href.startswith("/"):
                 href = "https://www.leboncoin.fr" + href
+            if "/ad/locations/" not in href and "/locations/" not in href:
+                continue
             pricing = ad.get("pricing") if isinstance(ad.get("pricing"), dict) else {}
             price = ad.get("price") or pricing.get("price") or pricing.get("amount")
+            if isinstance(price, list):
+                price = price[0] if price else None
             attr = ad.get("attributes") if isinstance(ad.get("attributes"), list) else []
             surface = None
             rooms = None
@@ -278,44 +259,53 @@ class LeboncoinScraper(BaseScraper):
                 if not isinstance(item, dict):
                     continue
                 key = (item.get("key") or "").lower()
-                value = item.get("value") or item.get("value_label")
+                value = item.get("value_label") or item.get("value")
                 if key in {"square", "surface"} and surface is None:
-                    surface = parse_surface_m2(str(value))
+                    surface = parse_surface_m2(str(value)+" m²")
                 if key == "rooms" and rooms is None:
                     rooms = parse_int(str(value))
+            location = ad.get("location") or {}
+            if not isinstance(location, dict):
+                location = {}
+            label = " ".join(str(value) for value in (location.get("city"), location.get("zipcode")) if value)
+            images = ad.get("images") or {}
+            images = images.get("urls", []) if isinstance(images, dict) else []
+            title = ad.get("subject") or ad.get("title") or ""
+            estate = next((item.get("value_label") for item in attr if isinstance(item, dict) and item.get("key")=="real_estate_type"), None)
+            if estate and estate.lower() not in title.lower():
+                title = f"{estate} · {title}".strip(" ·")
+            description = ad.get("body") or ""
+            if any(isinstance(item,dict) and item.get("key")=="charges_included" and str(item.get("value_label", "")).lower()=="oui" for item in attr):
+                description = (description + " Loyer charges comprises.").strip()
             listings.append(
                 ScrapedListing(
                     source=self.source,
                     external_id=str(ad.get("list_id") or ad.get("id") or hash_str(href)),
                     url=href,
-                    title=(ad.get("subject") or ad.get("title") or None),
-                    price=parse_int(str(price)) if price is not None else None,
+                    title=title or None,
+                    price=parse_price_eur(str(price)+" €") if price is not None else None,
                     surface_m2=surface,
-                    location=ad.get("location_label") or ad.get("city"),
+                    location=label or ad.get("location_label") or ad.get("city"),
                     rooms=rooms,
+                    description=description or None,
+                    images=images or None,
                 )
             )
         return listings
 
     # -- public API --------------------------------------------------------
     def fetch_city(self, city: Optional[str], postal_code: Optional[str]) -> Iterable[ScrapedListing]:
-        firecrawl_rows: list[ScrapedListing] = []
+        from scraper.quality import normalize_listing
         try:
-            firecrawl_rows = self._fetch_with_firecrawl(city, postal_code)
-        except Exception as exc:  # pragma: no cover - defensive
-            log.warning("leboncoin firecrawl path failed for %s/%s: %s", city, postal_code, exc)
-
-        if len(firecrawl_rows) >= 5:
-            for row in firecrawl_rows:
-                yield row
+            primary = [valid for row in self._legacy_fetch(city, postal_code)
+                       if (valid := normalize_listing(row)) is not None]
+        except Exception as exc:
+            log.info("leboncoin primary failed (%s)", type(exc).__name__)
+            primary = []
+        if primary:
+            yield from primary
             return
-
-        legacy_rows: list[ScrapedListing] = []
         try:
-            legacy_rows = self._legacy_fetch(city, postal_code)
-        except Exception as exc:  # pragma: no cover - defensive
-            log.info("leboncoin legacy path failed for %s/%s: %s", city, postal_code, exc)
-
-        merged = merge_listings(firecrawl_rows, legacy_rows)
-        for row in merged:
-            yield row
+            yield from self._fetch_with_firecrawl(city, postal_code)
+        except Exception as exc:
+            log.info("leboncoin backup failed (%s)", type(exc).__name__)

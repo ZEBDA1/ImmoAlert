@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800" role="img" aria-label="Illustration fictive d’un séjour lumineux, créée pour les captures ImmoAlert">
+  <defs><linearGradient id="wall" x2="0" y2="1"><stop stop-color="#e9e3d0"/><stop offset="1" stop-color="#c9d0ae"/></linearGradient><linearGradient id="floor" x2="0" y2="1"><stop stop-color="#b5a27e"/><stop offset="1" stop-color="#867658"/></linearGradient></defs>
+  <path fill="url(#wall)" d="M0 0h1200v555H0z"/><path fill="#b4bca0" d="M0 0l150 75v480H0z"/><path fill="url(#floor)" d="M0 555h1200v245H0z"/>
+  <path stroke="#796e54" stroke-width="3" opacity=".45" d="M0 640h1200M0 730h1200M200 555L50 800M460 555L400 800M720 555L800 800M980 555l220 245"/>
+  <rect x="720" y="95" width="330" height="325" rx="5" fill="#546a51"/><rect x="734" y="109" width="302" height="297" fill="#d7e9d4"/>
+  <path fill="#9eb795" d="M734 280l80-44 76 21 146-69v218H734z"/><path fill="#6e946a" d="M734 346l115-70 92 30 95-59v159H734z"/>
+  <path stroke="#ede8db" stroke-width="12" d="M886 109v297M734 252h302"/>
+  <path fill="#f4f0e1" d="M686 78h45v360h-60zm355 0h45l13 360h-58z"/>
+  <rect x="226" y="139" width="210" height="194" fill="#f5f1e4" stroke="#687358" stroke-width="10"/>
+  <circle cx="335" cy="230" r="61" fill="#c0cc84"/><path fill="#658064" d="M249 312l54-86 54 38 56-49v97z"/>
+  <ellipse cx="580" cy="683" rx="352" ry="76" fill="#4f5142" opacity=".14"/>
+  <rect x="236" y="434" width="424" height="182" rx="27" fill="#536c4f"/><rect x="262" y="413" width="179" height="124" rx="18" fill="#718665"/>
+  <rect x="453" y="413" width="179" height="124" rx="18" fill="#7b906e"/><rect x="218" y="505" width="459" height="101" rx="27" fill="#899d75"/>
+  <rect x="199" y="468" width="67" height="151" rx="20" fill="#536c4f"/><rect x="629" y="468" width="67" height="151" rx="20" fill="#536c4f"/>
+  <path stroke="#394b37" stroke-width="14" d="M241 606v39m414-39v39"/><rect x="515" y="446" width="88" height="70" rx="7" fill="#dbe394" transform="rotate(11 559 481)"/>
+  <ellipse cx="759" cy="633" rx="171" ry="41" fill="#69694f" opacity=".15"/><ellipse cx="759" cy="603" rx="139" ry="47" fill="#c9b58d"/>
+  <path stroke="#59614c" stroke-width="13" d="M676 616l-10 82m176-82 10 82"/><rect x="725" y="577" width="64" height="15" rx="3" fill="#788b65"/>
+  <rect x="733" y="566" width="61" height="10" rx="2" fill="#ece8d3"/><ellipse cx="830" cy="590" rx="19" ry="8" fill="#53694b"/><path fill="#ece5cb" d="M814 563h31l-4 27h-23z"/>
+  <rect x="1085" y="515" width="60" height="95" rx="9" fill="#ada780"/><path stroke="#526e46" stroke-width="8" fill="none" d="M1115 527V320m-1 123-45-42m47-6 42-40"/>
+  <ellipse cx="1081" cy="395" rx="27" ry="63" fill="#698b56" transform="rotate(-40 1081 395)"/><ellipse cx="1146" cy="362" rx="25" ry="62" fill="#84a36e" transform="rotate(40 1146 362)"/>
+  <ellipse cx="1116" cy="322" rx="25" ry="56" fill="#536e48"/>
+  <rect x="38" y="737" width="425" height="32" rx="3" fill="#10110f" opacity=".72"/><text x="54" y="759" font-family="Arial,sans-serif" font-size="15" letter-spacing="2" fill="#dcff43">IMMOALERT · BIEN FICTIF · ILLUSTRATION</text>
+</svg>

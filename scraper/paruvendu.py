@@ -10,6 +10,8 @@ from .base import BaseScraper, ScrapedListing
 from utils.cache import TTLCache
 from utils.http import fetch_html, http_client
 from utils.text import parse_float, parse_int
+from utils.text import parse_price_eur, parse_rooms, parse_surface_m2, clean_text
+from scraper.html_helpers import card_images, canonical_url
 
 
 INSEE_CACHE = TTLCache(ttl_seconds=24 * 3600)
@@ -30,14 +32,8 @@ class ParuVenduScraper(BaseScraper):
                 "fields": "nom,code,codesPostaux",
                 "format": "json",
             }
-            resp = http_client.get(
-                "https://geo.api.gouv.fr/communes",
-                params=params,
-                timeout=12,
-                retries=2,
-                use_proxy=False,
-            )
-            communes = resp.json() if resp.status_code == 200 else []
+            from utils.locations import public_json
+            communes = public_json("https://geo.api.gouv.fr/communes", params) or []
             if not communes:
                 return None
             if city:
@@ -66,14 +62,8 @@ class ParuVenduScraper(BaseScraper):
                 "boost": "population",
                 "limit": "5",
             }
-            resp = http_client.get(
-                "https://geo.api.gouv.fr/communes",
-                params=params,
-                timeout=12,
-                retries=2,
-                use_proxy=False,
-            )
-            communes = resp.json() if resp.status_code == 200 else []
+            from utils.locations import public_json
+            communes = public_json("https://geo.api.gouv.fr/communes", params) or []
             if communes:
                 code = communes[0].get("code")
                 if code:
@@ -115,6 +105,34 @@ class ParuVenduScraper(BaseScraper):
             seen.add(full)
             urls.append(full)
         return urls
+
+    def _parse_cards(self, html: str) -> list[ScrapedListing]:
+        soup = BeautifulSoup(html, "html.parser")
+        rows, seen = [], set()
+        for card in soup.select(".blocAnnonce[data-id]"):
+            anchor = card.select_one("h3 a[href*='/immobilier/location/']")
+            if not anchor:
+                continue
+            url = canonical_url(anchor.get("href") or "", "https://www.paruvendu.fr")
+            if url in seen or not re.search(r"/\d+[A-Z0-9]+$", url):
+                continue
+            title = clean_text(anchor.get("title") or anchor.get_text(" ", strip=True))
+            text = card.get_text(" ", strip=True)
+            price_node = card.select_one("[data-o]")
+            price = parse_price_eur(price_node.get_text(" ", strip=True) if price_node else text, monthly_only=True)
+            location = None
+            for label in anchor.stripped_strings:
+                if re.search(r"\(\d{2,5}\)", label):
+                    location = clean_text(label)
+            if location:
+                location = re.sub(r"^.*?m\s*2\s+", "", location)
+            description_node = card.select_one("p")
+            description = description_node.get_text(" ", strip=True) if description_node else None
+            rows.append(ScrapedListing(source=self.source, external_id=url.rsplit("/",1)[-1], url=url,
+                title=title, price=price, surface_m2=parse_surface_m2(title), rooms=parse_rooms(text),
+                location=location, description=description, images=card_images(card.select_one(".blocMedia") or card, "https://www.paruvendu.fr") or None))
+            seen.add(url)
+        return rows
 
     def _parse_detail(self, url: str) -> Optional[ScrapedListing]:
         html = fetch_html(url, referer="https://www.paruvendu.fr/")
@@ -176,7 +194,11 @@ class ParuVenduScraper(BaseScraper):
 
     def fetch_city(self, city: Optional[str], postal_code: Optional[str]) -> Iterable[ScrapedListing]:
         search_url = self._search_url(city, postal_code)
-        for url in self._listing_urls(search_url)[:50]:
-            listing = self._parse_detail(url)
-            if listing:
-                yield listing
+        html = fetch_html(search_url, referer="https://www.paruvendu.fr/")
+        if html:
+            rows = self._parse_cards(html)
+            if rows:
+                yield from rows[:100]
+                return
+        if html and self._listing_urls(search_url):
+            raise RuntimeError("ParuVendu: liens présents mais cartes non reconnues")

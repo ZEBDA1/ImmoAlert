@@ -15,6 +15,9 @@ class LogicImmoScraper(BaseScraper):
     source = "logicimmo"
 
     def _search_urls(self, city: Optional[str], postal_code: Optional[str]) -> list[str]:
+        from utils.locations import verified_portal_route
+        if verified := verified_portal_route(self.source, city, postal_code):
+            return [verified]
         term = (postal_code or city or "").strip()
         # Fallback to generic listing when no term
         base = "https://www.logic-immo.com/location-immobilier"

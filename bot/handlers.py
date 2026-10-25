@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from html import escape
 from aiogram import Router, F
 from aiogram.filters import Command, CommandObject
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 
@@ -22,12 +23,14 @@ from services.scheduler import (
     source_names,
 )
 from utils.firecrawl import firecrawl_available, firecrawl_rate_limited, firecrawl_status
+from utils.scrapling import scrapling_status, set_scrapling_enabled
+from utils.images import decode_images
 from services.matcher import match_and_score
 from services.scam import detect_scam
-from services.notification import send_alert, format_message, listing_keyboard
+from services.notification import send_alert, format_message, listing_keyboard, detail_pages, detail_keyboard
 from scraper.base import ScrapedListing
 from .states import FilterStates
-from .keyboards import skip_kb, main_panel_kb
+from .keyboards import skip_kb, main_panel_kb, scrapling_admin_kb
 from services.ai_features import ai_parse_filter
 
 log = logging.getLogger(__name__)
@@ -212,6 +215,9 @@ def _manage_filters_kb(filters: list[m.Filter], *, is_premium: bool) -> InlineKe
 
 
 def _favorite_action_kb(listing_id: int, *, liked: bool) -> InlineKeyboardMarkup:
+    row=repo.get_listing_by_id(listing_id)
+    if row:
+        return listing_keyboard(ScrapedListing(source=row.source,external_id=row.external_id,url=row.url,db_id=row.id),liked=liked)
     if liked:
         return InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="💔 Retirer des favoris", callback_data=f"fav:remove:{listing_id}")]]
@@ -317,7 +323,7 @@ async def _firecrawl_status_block() -> str:
         lines.append("  • ⏳ quota gratuit épuisé — renseigne FIRECRAWL_API_KEY")
     elif not settings.firecrawl_api_key:
         lines.append("  • ⚠️ sans FIRECRAWL_API_KEY le quota gratuit est très limité")
-    transport = "firecrawl" if firecrawl_available() else "fallback http (souvent 403)"
+    transport = "firecrawl" if firecrawl_available() else "replis HTML (voir Scrapling ci-dessous)"
     lines.append(f"  • leboncoin/seloger via {escape(transport)}")
     return "\n".join(lines)
 
@@ -353,7 +359,7 @@ async def _send_initial_matches(msg: Message, user: m.User, flt: m.Filter, *, li
             location=db_l.location,
             rooms=db_l.rooms,
             description=db_l.description,
-            images=db_l.images.split(",") if db_l.images else None,
+            images=decode_images(db_l.images) or None,
             published_at=db_l.published_at,
             db_id=db_l.id,
         )
@@ -441,6 +447,21 @@ async def _send_initial_and_existing_matches(msg: Message, user: m.User, flt: m.
 async def cmd_start(msg: Message, state: FSMContext):
     await state.clear()
     user = repo.get_or_create_user(msg.from_user.id, msg.from_user.username)
+    args = (msg.text or "").split(maxsplit=1)
+    if len(args) == 2 and args[1].startswith("site_"):
+        token = args[1][5:]
+        if msg.chat.type != "private" or not re.fullmatch(r"[a-f0-9]{32}", token):
+            await msg.answer("Ouvrez le lien de connexion dans une conversation privée avec le bot.")
+            return
+        await msg.answer(
+            "🌐 <b>Relier votre compte au site ImmoAlert</b>\n\n"
+            "Confirmez uniquement si vous venez de demander cette connexion sur votre site ImmoAlert. "
+            "Le site retrouvera vos recherches, vos favoris et vos droits d’administration.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="✅ Autoriser cette connexion", callback_data=f"sitepair:{token}")
+            ]]),
+        )
+        return
     if not user.active:
         with repo.session_scope() as s:
             u = s.get(m.User, user.id)
@@ -472,6 +493,30 @@ async def cmd_start(msg: Message, state: FSMContext):
         "Astuce: envoie une phrase comme <i>Paris 11, 2 pièces, 1200 € max</i> puis utilise /ai_filter."
     )
     await msg.answer(text, reply_markup=_panel(msg))
+
+
+@router.callback_query(F.data.startswith("sitepair:"))
+async def cb_site_pair(callback: CallbackQuery):
+    from services.site_sync import approve_pairing
+
+    if not callback.message or callback.message.chat.type != "private":
+        await callback.answer("Connexion disponible en privé uniquement.", show_alert=True)
+        return
+    token = callback.data.split(":", 1)[1]
+    approved = await asyncio.to_thread(approve_pairing, token, callback.from_user.id)
+    await callback.answer("Connexion autorisée." if approved else "Lien invalide.")
+    if approved:
+        await callback.message.edit_text("✅ Connexion autorisée. Retournez sur le site : votre espace se synchronise dans quelques secondes.")
+
+
+@router.message(Command("site"))
+async def cmd_site(msg: Message):
+    if not settings.web_site_url:
+        await msg.answer("Le site ImmoAlert n’est pas encore configuré.", reply_markup=_panel(msg))
+        return
+    await msg.answer("🌐 Votre espace ImmoAlert", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="Ouvrir le site", url=settings.web_site_url)
+    ]]))
 
 
 @router.message(Command("status"))
@@ -657,7 +702,7 @@ async def cmd_favorites(msg: Message, command: CommandObject | None = None):
             location=l.location,
             rooms=l.rooms,
             description=l.description,
-            images=l.images.split(",") if l.images else None,
+            images=decode_images(l.images) or None,
             published_at=l.published_at,
             db_id=l.id,
         )
@@ -888,11 +933,14 @@ async def set_budget_charges(msg: Message, state: FSMContext):
         await _send_initial_and_existing_matches(msg, user, flt, limit=5)
 
 
-@router.message(Command("admin"))
-async def cmd_admin(msg: Message):
-    if not _is_admin(msg.from_user.id):
-        await msg.answer("⛔ Accès refusé.", reply_markup=_panel(msg))
-        return
+async def _admin_panel() -> tuple[str, InlineKeyboardMarkup]:
+    from utils.firecrawl import key_pool_status
+    from utils.flashproxy import flashproxy_status
+    pool = key_pool_status()
+    proxy = flashproxy_status()
+    status = await asyncio.to_thread(scrapling_status)
+    state = "🟢 activé" if status.enabled else "⚪ désactivé"
+    availability = "prêt" if status.ready else "indisponible"
     text = (
         "🛠️ <b>Mode admin</b>\n\n"
         "Commandes:\n"
@@ -903,9 +951,51 @@ async def cmd_admin(msg: Message):
         "• /full_scan\n"
         "• /all_listings\n"
         "• /admin\n\n"
-        "Exemple: <code>/grant_premium 123456789</code>"
+        "Exemple: <code>/grant_premium 123456789</code>\n\n"
+        f"🕷️ <b>Moteur principal Scrapling</b> — {state} ({availability})\n"
+        f"{escape(status.detail)}\n"
+        f"🌐 FlashProxy — {escape(proxy['detail'])}\n"
+        f"🔁 Firecrawl en secours — {pool['keys_configured']} clé(s), {pool['keys_paused']} en pause.\n"
+        "Scrapling est essayé avant Firecrawl sur les pages HTML.\n"
+        "Le choix est conservé après redémarrage."
     )
-    await msg.answer(text, reply_markup=_panel(msg))
+    return text, scrapling_admin_kb(enabled=status.enabled)
+
+
+@router.message(Command("admin"))
+async def cmd_admin(msg: Message):
+    if not _is_admin(msg.from_user.id):
+        await msg.answer("⛔ Accès refusé.", reply_markup=_panel(msg))
+        return
+    text, keyboard = await _admin_panel()
+    await msg.answer(text, reply_markup=keyboard)
+
+
+@router.callback_query(F.data.startswith("admin:scrapling:"))
+async def cb_admin_scrapling(callback: CallbackQuery):
+    # Check the person clicking, even if an old panel is visible in a group.
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("⛔ Accès refusé.", show_alert=True)
+        return
+    if callback.data not in {"admin:scrapling:on", "admin:scrapling:off"}:
+        await callback.answer("Action inconnue.", show_alert=True)
+        return
+    enabled = callback.data == "admin:scrapling:on"
+    if enabled:
+        status = await asyncio.to_thread(scrapling_status)
+        if not status.ready:
+            await callback.answer(status.detail, show_alert=True)
+            return
+    await asyncio.to_thread(set_scrapling_enabled, enabled)
+    await callback.answer("Moteur principal Scrapling activé." if enabled else "Moteur principal Scrapling désactivé.")
+    if isinstance(callback.message, Message):
+        text, keyboard = await _admin_panel()
+        try:
+            await callback.message.edit_text(text, reply_markup=keyboard)
+        except TelegramBadRequest as exc:
+            # A stale enable button can already match the persisted state.
+            if "message is not modified" not in str(exc).lower():
+                raise
 
 
 @router.message(Command("grant_premium"))
@@ -985,6 +1075,12 @@ async def cmd_debug_sources(msg: Message):
     lines = ["🛰️ <b>État des sources scraping</b>", "", _compact_source_health()]
     lines.append("")
     lines.append(await _firecrawl_status_block())
+    status = await asyncio.to_thread(scrapling_status)
+    state = "activé" if status.enabled else "désactivé"
+    availability = "prêt" if status.ready else "indisponible"
+    lines.append(f"\n🕷️ <b>Moteur principal Scrapling</b> — {state} ({availability})")
+    lines.append(f"  • {escape(status.detail)}")
+    lines.append("  • Activation/désactivation depuis /admin")
     lines.append("")
     lines.append(
         "📚 <b>Sources configurées</b>: " + escape(", ".join(source_names()))
@@ -1112,7 +1208,7 @@ async def cmd_all_listings(msg: Message):
             location=db_l.location,
             rooms=db_l.rooms,
             description=db_l.description,
-            images=db_l.images.split(",") if db_l.images else None,
+            images=decode_images(db_l.images) or None,
             published_at=db_l.published_at,
             db_id=db_l.id,
         )
@@ -1384,6 +1480,40 @@ async def cb_delete_filter(callback: CallbackQuery):
         await callback.message.answer(
             f"⚠️ Filtre introuvable: <code>{name}</code>.", reply_markup=_panel_for_user_id(callback.from_user.id)
         )
+
+
+@router.callback_query(F.data.startswith("info:"))
+async def cb_listing_details(callback: CallbackQuery):
+    await callback.answer()
+    if not callback.message or not callback.data:
+        return
+    try:
+        _,identifier,page=callback.data.split(":")
+        identifier,page=int(identifier),int(page)
+        if identifier<=0 or page<0:
+            raise ValueError()
+    except (ValueError,TypeError):
+        return
+    row=repo.get_listing_by_id(identifier)
+    if not row or row.inventory_status=="invalid":
+        await callback.message.answer("Cette annonce est introuvable.")
+        return
+    # Show progress for slow portals and keep a single message when paginating.
+    is_detail=(callback.message.text or "").startswith("ℹ️ Informations")
+    message=callback.message if is_detail else await callback.message.answer("ℹ️ Informations · chargement…")
+    if page==0:
+        from services.listing_details import get_listing_details
+        try:
+            row=await asyncio.wait_for(get_listing_details(identifier),timeout=22)
+        except asyncio.TimeoutError:
+            pass
+    pages=detail_pages(row)
+    page=min(page,len(pages)-1)
+    try:
+        await message.edit_text(f"ℹ️ Informations · {page+1}/{len(pages)}\n\n"+pages[page],parse_mode="HTML",disable_web_page_preview=True,reply_markup=detail_keyboard(row,page,len(pages)))
+    except TelegramBadRequest as exc:
+        if "message is not modified" not in str(exc).lower():
+            raise
 
 
 @router.callback_query(F.data.startswith("fav:add:"))

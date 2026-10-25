@@ -24,7 +24,32 @@ python main.py
 
 La base locale utilise `sqlite:///data.db` par défaut. Le fichier Compose utilise une base distincte dans `storage/data.db`.
 
-## Replis navigateur optionnels
+## Site web
+
+Les sources React et TypeScript sont versionnées dans `web/`. Avec Node.js 22.12+ :
+
+```bash
+npm --prefix web ci
+npm --prefix web run dev
+```
+
+Vite écoute sur `http://127.0.0.1:5182` et transmet les appels API au backend local sur `127.0.0.1:8088`. Dans une configuration de développement distincte, utiliser `WEB_ENABLED=true`, `WEB_PORT=8088`, `WEB_SITE_URL=http://127.0.0.1:5182` et un `WEB_DIST_PATH` pointant vers `web/dist`. Un build initial est nécessaire au démarrage du serveur web Python :
+
+```bash
+npm --prefix web run build
+```
+
+Docker construit lui-même le site et l’intègre à l’image ; il ne dépend d’aucun dossier voisin. Le script `python3 scripts/package_plesk.py` produit une autre compilation utilisant la passerelle PHP, sans modifier le build local. [Détails du frontend](../web/README.md) et [déploiement Plesk](PLESK.md).
+
+## Scrapling principal et replis navigateur
+
+`requirements.txt` inclut `scrapling[fetchers]`. Pour son navigateur en local, installer Chromium/Chrome et renseigner `SCRAPLING_BROWSER_PATH`, ou utiliser la commande recommandée par le projet :
+
+```bash
+scrapling install
+```
+
+L’image Docker réutilise son Chromium système. Le moteur principal se contrôle depuis la console web ou `/admin` ; son réglage persistant est décrit dans le [guide de configuration](CONFIGURATION.md).
 
 Certains chemins de collecte peuvent utiliser Playwright lorsqu’il est installé :
 

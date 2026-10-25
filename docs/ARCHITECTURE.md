@@ -20,7 +20,7 @@ Les appels Firecrawl passent par des sous-processus avec timeout, fichiers de sc
 
 `scraper/quality.py` normalise les annonces et extrait les valeurs utiles. `utils/text.py` traite les prix français, surfaces et pièces. Une localisation manquante reste manquante : le lieu recherché n’est pas ajouté comme preuve de localisation.
 
-La déduplication associe identifiant de source, signature canonique et fenêtre de conservation. Le matching applique les limites et le type de bien, puis la zone. Le score compare notamment le prix au budget de l’utilisateur et la surface à son minimum. Les comparaisons par rayon nécessitent le géocodage optionnel.
+La déduplication associe identifiant de source, publications d’un même bien, comparaison des descriptions/images et fenêtre de conservation. Le matching applique les limites et le type de bien, puis la zone. Le score compare notamment le prix au budget de l’utilisateur et la surface à son minimum. Les comparaisons par rayon nécessitent le géocodage optionnel.
 
 ## Envoi et persistance
 
@@ -39,3 +39,23 @@ L’envoi réseau et l’écriture SQL ne forment pas une transaction distribué
 `source_runs` conserve les volumes bruts, normalisés, rejetés et uniques, ainsi que les erreurs, délais et statuts de chaque collecte. Les échecs répétés déclenchent une attente progressive par source. `/debug_sources` expose ces informations et l’état Firecrawl.
 
 Le healthcheck Docker contrôle uniquement la configuration et la connexion SQL. Il est indépendant de la disponibilité de Telegram et des sites collectés.
+
+## Site, identités et administration
+
+Le frontend React/TypeScript de `web/` est construit par Docker et servi par `services/web_api.py`. Les sessions web portent l’identifiant interne d’un profil ; `users.telegram_id` peut être nul. `web_accounts` conserve les identifiants de connexion, les dérivés scrypt des mots de passe, le rôle et l’état d’accès. Les routes d’administration relisent les droits avant chaque opération.
+
+Les cookies de session sont HttpOnly, SameSite=Lax, et Secure sur HTTPS. Le cookie est renouvelé à la connexion ; seule son empreinte est enregistrée dans `web_sessions`. La réinitialisation d’un mot de passe ou la désactivation d’un accès révoque les sessions correspondantes. La connexion Telegram directe est réservée aux administrateurs configurés et aux profils déjà invités. Un membre connecté peut relier Telegram après approbation dans le bot ; les recherches et favoris sont regroupés sans écraser les relations existantes.
+
+Le site affiche l’inventaire cohérent observé depuis moins de trente jours, dans la limite de 800 fiches. Les aperçus sont légers ; `GET /api/listings/{id}` enrichit à la demande la description, les caractéristiques, la galerie et la localisation. Les coordonnées du portail sont distinguées d’un centre de commune approximatif.
+
+## Publications d’un même bien
+
+`listing_publications` conserve chaque identité source/externe et son URL derrière une fiche canonique. `services/deduplication.py` compare la zone, le prix, la surface et les pièces, puis exige une photo commune ou une description suffisamment distinctive. Une nouvelle annonce ambiguë peut déclencher une vérification de ses détails et de ceux de deux candidats avant l’alerte.
+
+La vérification progressive de l’inventaire existant travaille par petits lots en arrière-plan. Les anciennes lignes sont conservées avec une référence au bien canonique ; favoris et historiques sont regroupés. Les critères simples restent insuffisants pour fusionner deux logements.
+
+## Supervision et passerelle Plesk
+
+`web_requests` enregistre uniquement les métadonnées des appels API : profil, méthode, chemin, action, statut et durée. Les requêtes en cours sont suivies en mémoire. Le journal est limité à 20 000 entrées et trois jours ; les sondes de santé et de supervision ne s’enregistrent pas elles-mêmes. Les fichiers statiques servis par Plesk n’entrent pas dans ce journal.
+
+Sur Plesk mutualisé, le navigateur utilise le frontend et la passerelle PHP du même domaine. Le secret de liaison reste hors de `httpdocs`. La passerelle limite les routes et signe méthode, chemin, empreinte du corps, origine, adresse cliente, horodatage et nonce. Le backend vérifie le HMAC et refuse les signatures expirées ou réutilisées. Le backend permanent peut être exposé par un reverse proxy HTTPS ou un tunnel sortant ; le bot et Chromium ne tournent pas dans le mutualisé.

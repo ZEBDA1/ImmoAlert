@@ -20,10 +20,40 @@ from sqlalchemy.orm import relationship, Mapped, mapped_column
 from .session import Base
 
 
+class RuntimeSetting(Base):
+    __tablename__ = "runtime_settings"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
+
+
+class WebSession(Base):
+    __tablename__ = "web_sessions"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # SHA-256, never the cookie
+    telegram_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, index=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    web_account_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    pair_token: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, unique=True)
+    pair_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    pair_command_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+
+
+class WebCommand(Base):
+    __tablename__ = "web_commands"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    telegram_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, index=True)
+    profile_user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String(24))
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    result: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
 class User(Base):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
+    telegram_id: Mapped[Optional[int]] = mapped_column(BigInteger, unique=True, index=True, nullable=True)
     username: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     is_premium: Mapped[bool] = mapped_column(Boolean, default=False)
     premium_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -31,6 +61,32 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     filters: Mapped[list[Filter]] = relationship("Filter", back_populates="user", cascade="all, delete-orphan")
+
+
+class WebAccount(Base):
+    __tablename__ = "web_accounts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), unique=True, index=True)
+    login: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(Text)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class WebRequest(Base):
+    __tablename__ = "web_requests"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    actor: Mapped[str] = mapped_column(String(80))
+    method: Mapped[str] = mapped_column(String(8))
+    path: Mapped[str] = mapped_column(String(180))
+    action: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    status: Mapped[int] = mapped_column(Integer)
+    duration_ms: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
 class Filter(Base):
@@ -66,18 +122,39 @@ class Listing(Base):
     location: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     rooms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    images: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # comma-separated URLs
+    images: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array; legacy comma-separated URLs remain readable
     published_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    inventory_status: Mapped[Optional[str]] = mapped_column(String(24), nullable=True, index=True)
     canonical_signature: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     quality_flags: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     normalized_city: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     normalized_postal_code: Mapped[Optional[str]] = mapped_column(String(16), nullable=True, index=True)
     charges_included: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    duplicate_of_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    details_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    details_status: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    geo_precision: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("source", "external_id", name="uq_source_external"),
     )
+
+
+class ListingPublication(Base):
+    """Every portal identity points to one property, including merged duplicates."""
+    __tablename__ = "listing_publications"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    listing_id: Mapped[int] = mapped_column(Integer, ForeignKey("listings.id"), index=True)
+    source: Mapped[str] = mapped_column(String(32))
+    external_id: Mapped[str] = mapped_column(String(128))
+    url: Mapped[str] = mapped_column(Text)
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    __table_args__ = (UniqueConstraint("source", "external_id", name="uq_publication_source_external"),)
 
 
 class SentAlert(Base):

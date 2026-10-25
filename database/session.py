@@ -34,6 +34,44 @@ def init_db():
     from . import models  # noqa: F401
     Base.metadata.create_all(bind=engine)
     _run_light_migrations()
+    _allow_users_without_telegram()
+
+
+def _allow_users_without_telegram():
+    """Rebuild only the legacy SQLite users table, retaining IDs and indexes."""
+    from sqlalchemy import inspect, MetaData
+    from sqlalchemy.schema import CreateTable, CreateIndex
+    from .models import User
+    columns=inspect(engine).get_columns("users")
+    if not next(column for column in columns if column["name"]=="telegram_id")["nullable"]:
+        if engine.dialect.name!="sqlite":
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE users ALTER COLUMN telegram_id DROP NOT NULL"))
+            return
+        table=User.__table__.to_metadata(MetaData(),name="users_login_migration")
+        names=", ".join('"'+column.name+'"' for column in User.__table__.columns)
+        with engine.connect() as conn:
+            foreign_keys=conn.exec_driver_sql("PRAGMA foreign_keys").scalar()
+            conn.commit()
+            conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+            conn.commit()
+            try:
+                conn.exec_driver_sql("BEGIN IMMEDIATE")
+                conn.execute(CreateTable(table))
+                conn.exec_driver_sql(f"INSERT INTO users_login_migration ({names}) SELECT {names} FROM users")
+                conn.exec_driver_sql("DROP TABLE users")
+                conn.exec_driver_sql("ALTER TABLE users_login_migration RENAME TO users")
+                for index in User.__table__.indexes:
+                    conn.execute(CreateIndex(index))
+                if conn.exec_driver_sql("PRAGMA foreign_key_check").first():
+                    raise RuntimeError("User migration failed referential integrity check")
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.exec_driver_sql(f"PRAGMA foreign_keys={int(foreign_keys)}")
+                conn.commit()
 
 
 def _column_exists(table: str, column: str) -> bool:
@@ -77,13 +115,27 @@ def _run_light_migrations() -> None:
     try:
         datetime_type = "DATETIME" if settings.database_url.startswith("sqlite") else "TIMESTAMP NULL"
         _add_column_if_missing("users", "premium_until", datetime_type)
+        _add_column_if_missing("web_sessions", "user_id", "INTEGER")
+        _add_column_if_missing("web_sessions", "web_account_id", "INTEGER")
+        _add_column_if_missing("web_commands", "profile_user_id", "INTEGER")
+        _create_index_if_missing("ix_web_sessions_user_id", "web_sessions", "user_id")
+        _create_index_if_missing("ix_web_commands_profile_user_id", "web_commands", "profile_user_id")
 
         listing_columns = {
+            "last_seen_at": datetime_type,
+            "inventory_status": "VARCHAR(24)",
             "canonical_signature": "VARCHAR(64)",
             "quality_flags": "TEXT",
             "normalized_city": "VARCHAR(120)",
             "normalized_postal_code": "VARCHAR(16)",
             "charges_included": "BOOLEAN",
+            "duplicate_of_id": "INTEGER",
+            "details": "TEXT",
+            "details_checked_at": datetime_type,
+            "details_status": "VARCHAR(24)",
+            "latitude": "FLOAT",
+            "longitude": "FLOAT",
+            "geo_precision": "VARCHAR(24)",
         }
         for column, definition in listing_columns.items():
             _add_column_if_missing("listings", column, definition)
@@ -100,6 +152,9 @@ def _run_light_migrations() -> None:
                 _add_column_if_missing(table, column, definition)
 
         _create_index_if_missing("ix_listings_canonical_signature", "listings", "canonical_signature")
+        _create_index_if_missing("ix_listings_duplicate_of_id", "listings", "duplicate_of_id")
+        _create_index_if_missing("ix_listings_inventory_status", "listings", "inventory_status")
+        _create_index_if_missing("ix_listings_last_seen_at", "listings", "last_seen_at")
         _create_index_if_missing("ix_listings_normalized_city", "listings", "normalized_city")
         _create_index_if_missing("ix_listings_normalized_postal_code", "listings", "normalized_postal_code")
         _create_index_if_missing("ix_sent_alerts_filter_id", "sent_alerts", "filter_id")

@@ -19,3 +19,6 @@ storage/
 *.sqlite
 *.sqlite3
 *.log
+dist/
+web/node_modules/
+web/dist/

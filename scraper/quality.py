@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import re
 import unicodedata
+import math
 from urllib.parse import urlparse
 
 from config import settings
 from scraper.base import ScrapedListing
 from utils.hash import hash_str
 from utils.text import parse_price_eur, parse_rooms, parse_surface_m2
+
+SOURCE_HOSTS = {"pap":"pap.fr", "entreparticuliers":"entreparticuliers.com", "paruvendu":"paruvendu.fr",
+    "leboncoin":"leboncoin.fr", "seloger":"seloger.com", "logicimmo":"logic-immo.com",
+    "rentola":"rentola.fr", "ouestfranceimmo":"ouestfrance-immo.com"}
 
 
 def _clean(value: str | None, *, max_len: int | None = None) -> str | None:
@@ -95,7 +100,7 @@ def listing_quality_flags(listing: ScrapedListing) -> list[str]:
     flags: list[str] = []
     if not _valid_http_url(listing.url):
         flags.append("invalid_url")
-    if not listing.title or _norm_text(listing.title) in {"annonce", "annonce immobiliere"}:
+    if not listing.title or _norm_text(listing.title) in {"annonce", "annonce immobiliere", "en attente de photo", "voir l annonce", "photo non fournie"}:
         flags.append("weak_title")
     if listing.price is None:
         flags.append("missing_price")
@@ -115,6 +120,36 @@ def listing_quality_flags(listing: ScrapedListing) -> list[str]:
     return flags
 
 
+def coherence_issues(listing: ScrapedListing) -> list[str]:
+    """Reasons a known portal record cannot be published as a housing rental."""
+    issues = []
+    flags = listing_quality_flags(listing)
+    if "invalid_url" in flags:
+        issues.append("invalid_url")
+    if listing.source not in SOURCE_HOSTS:
+        return issues
+    host = (urlparse(listing.url).hostname or "").lower()
+    expected = SOURCE_HOSTS[listing.source]
+    if host not in {expected, "www."+expected}:
+        issues.append("source_host_mismatch")
+    issues.extend(flag for flag in ("weak_title", "missing_price", "missing_location") if flag in flags)
+    if listing.surface_m2 is None and listing.rooms is None:
+        issues.append("missing_size_and_rooms")
+    title, path = _norm_text(listing.title), urlparse(listing.url).path.lower()
+    if re.search(r"/(?:vente|ventes|achat|achats)/", path) or re.search(r"\b(?:a vendre|viager|vente appartement|vente maison)\b", title):
+        issues.append("not_a_rental")
+    if re.search(r"/(?:local-commercial|bureaux?|commerce|entrepot|terrain|garage|parking|stationnement)(?:[-/]|$)", path) or re.search(r"^(?:(?:location|louer|a louer)\s+)?(?:parking|garage|bureau|local commercial|terrain|entrepot|commerce)\b", title):
+        issues.append("non_residential")
+    positive = title + " " + _norm_text(path)
+    if not re.search(r"\b(?:appartement|appartements|maison|studio|studette|chambre|colocation|duplex|loft|villa|pavillon|logement|[tf][1-9])\b", positive):
+        issues.append("unidentified_property_type")
+    if listing.price is not None and (not isinstance(listing.price, (int,float)) or isinstance(listing.price,bool) or not math.isfinite(listing.price) or not 0 < listing.price <= 50000):
+        issues.append("rent_price_to_review")
+    if listing.surface_m2 is not None and (not isinstance(listing.surface_m2, (int,float)) or not math.isfinite(listing.surface_m2) or not 0 < listing.surface_m2 <= 5000):
+        issues.append("surface_to_review")
+    return list(dict.fromkeys(issues))
+
+
 def normalize_listing(
     listing: ScrapedListing,
     *,
@@ -125,15 +160,20 @@ def normalize_listing(
         return None
 
     title = _clean(listing.title, max_len=240)
-    description = _clean(listing.description, max_len=1200)
+    description = _clean(listing.description, max_len=60000)
     location = _clean(listing.location, max_len=220)
 
     haystack = " ".join(v for v in (title, description, location) if v)
-    price = listing.price if listing.price and listing.price > 0 else _infer_price(haystack)
-    surface = listing.surface_m2 if listing.surface_m2 and listing.surface_m2 > 0 else _infer_surface(haystack)
-    rooms = listing.rooms if listing.rooms and listing.rooms > 0 else _infer_rooms(haystack)
-    price_per_m2 = listing.price_per_m2
-    if not price_per_m2 and price and surface and surface > 0:
+    for value in (listing.price, listing.surface_m2, listing.rooms):
+        if value is not None and (not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) or value <= 0):
+            return None
+    # Portal parsers extract price from the scoped price field. Never turn a
+    # deposit or a market statistic in the description into the monthly rent.
+    price = listing.price if listing.source in SOURCE_HOSTS else listing.price or _infer_price(haystack)
+    surface = listing.surface_m2 or _infer_surface(haystack)
+    rooms = listing.rooms or _infer_rooms(title or "")
+    price_per_m2 = None
+    if price and surface and surface > 0:
         price_per_m2 = price / surface
 
     images = []
@@ -160,7 +200,7 @@ def normalize_listing(
         published_at=listing.published_at,
         db_id=listing.db_id,
     )
-    if "low_signal" in listing_quality_flags(normalized):
+    if "low_signal" in listing_quality_flags(normalized) or coherence_issues(normalized):
         return None
     return normalized
 
@@ -172,4 +212,9 @@ def quality_signature(listing: ScrapedListing) -> str:
     price = str(listing.price or "")
     surface = f"{listing.surface_m2:.1f}" if listing.surface_m2 else ""
     rooms = str(listing.rooms or "")
-    return hash_str("|".join([title, location, postal, price, surface, rooms]))
+    description = _norm_text(listing.description)
+    # Generic "Appartement T2 / Rouen / 42m² / 800€" is not proof that two
+    # distinct advertisements concern the same home. Only a substantial common
+    # description permits a cross-portal signature; otherwise use the URL.
+    identity = description[:700] if len(description) >= 120 else listing.url.split("?")[0].split("#")[0].rstrip("/")
+    return hash_str("|".join([title, location, postal, price, surface, rooms, identity]))

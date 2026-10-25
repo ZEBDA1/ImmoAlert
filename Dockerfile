@@ -1,5 +1,12 @@
 FROM node:22-bookworm-slim AS node-runtime
 
+FROM node-runtime AS web-build
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY web/ ./
+RUN npm run build
+
 FROM python:3.11-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -41,7 +48,11 @@ RUN npm install -g firecrawl-cli@1.26.22 && \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Scrapling uses the Chromium already installed in this image.
+ENV SCRAPLING_BROWSER_PATH=/usr/bin/chromium
+
 COPY . .
+COPY --from=web-build /web/dist /app/web_dist
 
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
     CMD python scripts/healthcheck.py

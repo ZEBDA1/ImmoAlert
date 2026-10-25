@@ -145,6 +145,7 @@ def listing_keyboard(l: ScrapedListing, *, liked: bool = False) -> InlineKeyboar
     if l.url:
         rows.append([InlineKeyboardButton(text="🔎 Ouvrir l'annonce", url=l.url)])
     if getattr(l, "db_id", None):
+        rows.append([InlineKeyboardButton(text="ℹ️ Plus d’informations", callback_data=f"info:{l.db_id}:0")])
         if liked:
             rows.append(
                 [
@@ -164,6 +165,66 @@ def listing_keyboard(l: ScrapedListing, *, liked: bool = False) -> InlineKeyboar
                 ]
             )
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
+
+
+def detail_pages(row) -> list[str]:
+    """Escape after pagination, accounting for Telegram UTF-16 and HTML limits."""
+    import json
+    from database import repo
+    lines=[row.title or "Annonce immobilière", row.location or "Localisation non précisée"]
+    specs=[]
+    if row.price is not None:
+        specs.append(_money(row.price)+" / mois")
+    if row.surface_m2 is not None:
+        specs.append(f"{row.surface_m2:g} m²")
+    if row.rooms is not None:
+        specs.append(f"{row.rooms} pièces")
+    lines.extend([" · ".join(specs),""])
+    if row.charges_included is not None:
+        lines.append("Charges comprises" if row.charges_included else "Charges non comprises")
+    for key,value in json.loads(row.details or "{}").items():
+        lines.append(f"{key} : {value}")
+    if row.geo_precision:
+        lines.append("Localisation fournie par le portail (précision à confirmer)." if row.geo_precision=="portal" else "Localisation approximative au centre de la commune.")
+    lines.extend(["",row.description or "Description complète indisponible pour le moment.","","Publié sur : "+", ".join(_source_label(p["source"]) for p in repo.listing_publications(row.id))])
+    if row.details_status!="complete":
+        lines.extend(["","Les informations complémentaires n’ont pas pu être récupérées. Réessaie plus tard ou consulte le portail."])
+    pages=[]
+    chunk=""
+    size=0
+    for char in "\n".join(lines):
+        escaped=escape(char)
+        weight=len(escaped.encode("utf-16-le"))//2
+        if size+weight>3500:
+            pages.append(chunk)
+            chunk=""
+            size=0
+        chunk+=escaped
+        size+=weight
+    if chunk:
+        pages.append(chunk)
+    return pages
+
+
+def detail_keyboard(row, page: int, total: int):
+    from config import settings
+    from database import repo
+    rows=[]
+    navigation=[]
+    if page>0:
+        navigation.append(InlineKeyboardButton(text="← Précédent",callback_data=f"info:{row.id}:{page-1}"))
+    if page+1<total:
+        navigation.append(InlineKeyboardButton(text="Suite →",callback_data=f"info:{row.id}:{page+1}"))
+    if navigation:
+        rows.append(navigation)
+    site_url=settings.web_proxy_origin or settings.web_site_url
+    if site_url:
+        rows.append([InlineKeyboardButton(text="🌐 Fiche et photos sur le site",url=site_url.rstrip("/")+f"/?listing={row.id}")])
+    for publication in repo.listing_publications(row.id):
+        rows.append([InlineKeyboardButton(text="🔗 "+_source_label(publication["source"]),url=publication["url"])])
+    if row.latitude is not None and row.longitude is not None:
+        rows.append([InlineKeyboardButton(text="📍 Voir la localisation",url=f"https://www.openstreetmap.org/?mlat={row.latitude}&mlon={row.longitude}#map=14/{row.latitude}/{row.longitude}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 async def send_alert(bot: Bot, user: m.User, l: ScrapedListing, score_label: str, scam_tag: str | None):

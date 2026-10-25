@@ -3,15 +3,20 @@ from __future__ import annotations
 import os
 import random
 import time
+import re
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Any, Optional
 import json
+import hashlib
 
 import requests
 from requests import Response
 
 from config import settings
 from utils.cache import TTLCache
+from utils.scrapling import fetch_with_scrapling, scrapling_enabled
+from utils.fetch_diagnostics import note_problem
 from .uagents import random_user_agent
 
 BLOCKED_STATUSES = {403, 429, 503}
@@ -108,58 +113,72 @@ http_client = HttpClient()
 
 
 def is_probably_blocked(html: str) -> bool:
-    txt = html.lower()
-    blocked_signals = [
-        "access denied",
-        "forbidden",
-        "captcha",
-        "verify you are human",
-        "attention required",
-        "cloudflare",
-        "datadome",
-        "cf-challenge",
-    ]
-    return any(s in txt for s in blocked_signals)
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "lxml")
+    title = soup.title.get_text(" ", strip=True).lower() if soup.title else ""
+    for node in soup.select("script,style,template"):
+        node.decompose()
+    visible = soup.get_text(" ", strip=True).lower()
+    visible = "".join(c for c in unicodedata.normalize("NFKD", visible) if not unicodedata.combining(c))
+    if any(value in title for value in ("just a moment", "attention required", "access denied", "site actuellement indisponible")):
+        return True
+    phrases = ("access denied", "verify you are human", "verifiez que vous etes humain", "acces restreint",
+               "trafic inhabituel", "please enable js and disable any ad blocker", "enable javascript and cookies to continue",
+               "checking your browser", "cf-challenge")
+    if any(phrase in visible for phrase in phrases):
+        return True
+    # A normal page may import Cloudflare/reCAPTCHA code or describe CAPTCHAs
+    # in its footer. Only a short visible error/challenge is evidence of a block.
+    return len(visible) < 500 and bool(re.search(r"\b(captcha|forbidden|cloudflare|datadome)\b", visible))
 
 
-def fetch_html(url: str, *, referer: Optional[str] = None, timeout: int = 18) -> Optional[str]:
-    cache_key = f"html:{url}"
-    cached = _HTML_CACHE.get(cache_key)
-    if cached:
+def fetch_html(url: str, *, referer: Optional[str] = None, timeout: int = 18, headers: dict | None = None) -> Optional[str]:
+    from utils.firecrawl import get_client, firecrawl_available
+    from utils.flashproxy import configuration_id
+
+    primary_enabled = scrapling_enabled()
+    header_id = hashlib.sha256(json.dumps(headers or {}, sort_keys=True).encode()).hexdigest()[:16]
+    cache_key = f"html:{primary_enabled}:{settings.firecrawl_enabled}:{configuration_id()}:{header_id}:{url}"
+    if cached := _HTML_CACHE.get(cache_key):
         return cached
-    resp = http_client.get(
-        url,
-        referer=referer,
-        timeout=timeout,
-        retries=3,
-        allow_statuses=BLOCKED_STATUSES | {404},
-    )
-    if resp.status_code == 404:
-        return None
-    if resp.status_code in BLOCKED_STATUSES:
-        # Playwright is usually faster to start than Selenium+webdriver-manager.
-        html = get_with_playwright(url, timeout_ms=timeout * 1000)
-        if html and not is_probably_blocked(html):
-            return html
-        if _selenium_fallback_enabled():
-            html = get_with_selenium(url, timeout_sec=max(10, timeout - 2))
-            if html and not is_probably_blocked(html):
-                return html
-        return None
-    if resp.status_code == 200 and resp.text and not is_probably_blocked(resp.text):
-        _HTML_CACHE.set(cache_key, resp.text)
-        return resp.text
-
-    # Playwright fallback first, then Selenium optional fallback.
-    html = get_with_playwright(url, timeout_ms=timeout * 1000)
+    html = fetch_with_scrapling(url, referer=referer, headers=headers) if primary_enabled else None
     if html and not is_probably_blocked(html):
         _HTML_CACHE.set(cache_key, html)
         return html
-    if _selenium_fallback_enabled():
-        html = get_with_selenium(url, timeout_sec=max(10, timeout - 2))
+    if firecrawl_available():
+        html = get_client().fetch_html(url)
         if html and not is_probably_blocked(html):
             _HTML_CACHE.set(cache_key, html)
             return html
+    # The old direct transport is only used when the admin disables Scrapling.
+    # An explicitly enabled FlashProxy must never silently bypass its proxy.
+    if primary_enabled or settings.flashproxy_enabled:
+        note_problem("blocked_or_unavailable", url)
+        return None
+    resp = None
+    try:
+        resp = http_client.get(url, referer=referer, headers=headers, timeout=timeout, retries=1,
+                               allow_statuses=BLOCKED_STATUSES | {404})
+    except requests.RequestException:
+        pass
+    if resp is not None:
+        if resp.status_code == 404:
+            note_problem("http_404", url)
+            return None
+        if resp.status_code == 200 and resp.text and not is_probably_blocked(resp.text):
+            _HTML_CACHE.set(cache_key, resp.text)
+            return resp.text
+    try:
+        html = get_with_playwright(url, timeout_ms=timeout * 1000)
+    except Exception:
+        html = None
+    if not html and _selenium_fallback_enabled():
+        html = get_with_selenium(url, timeout_sec=max(10, timeout - 2))
+    if html and not is_probably_blocked(html):
+        _HTML_CACHE.set(cache_key, html)
+        return html
+    note_problem("blocked_or_unavailable" if resp is not None else "network_unavailable", url)
     return None
 
 
@@ -224,11 +243,13 @@ def get_with_selenium(url: str, *, timeout_sec: int = 20) -> Optional[str]:
 def _playwright_sync_fetch(url: str, *, timeout_ms: int = 15000) -> Optional[str]:
     try:
         from playwright.sync_api import sync_playwright
+        from utils.scrapling import _browser_path
     except Exception:
         return None
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
+            executable_path=_browser_path(),
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
@@ -285,12 +306,14 @@ def _playwright_sync_fetch_json(
 ) -> tuple[int, Optional[Any]]:
     try:
         from playwright.sync_api import sync_playwright
+        from utils.scrapling import _browser_path
     except Exception:
         return (0, None)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
+            executable_path=_browser_path(),
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",

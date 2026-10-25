@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import re
 from typing import Iterable, Optional
-from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
 from .base import BaseScraper, ScrapedListing
-from utils.hash import hash_str
-from utils.http import http_client
-from utils.text import parse_float, parse_int
+from utils.http import fetch_html
+from utils.text import parse_price_eur, parse_surface_m2, parse_rooms, clean_text
+from scraper.html_helpers import canonical_url, card_images, location_from_url
 
 
 class EntreParticuliersScraper(BaseScraper):
@@ -47,62 +46,38 @@ class EntreParticuliersScraper(BaseScraper):
             _add("https://www.entreparticuliers.com/annonces-immobilieres/location")
         return urls
 
-    def fetch_city(self, city: Optional[str], postal_code: Optional[str]) -> Iterable[ScrapedListing]:
-        links: dict[str, str] = {}
-        for url in self._candidate_urls(city, postal_code):
-            resp = http_client.get(
-                url,
-                referer="https://www.entreparticuliers.com/",
-                allow_statuses={403, 404, 429},
-                retries=2,
-            )
-            if resp.status_code != 200:
+    def _parse_cards(self, html: str) -> list[ScrapedListing]:
+        soup = BeautifulSoup(html, "html.parser")
+        rows, seen = [], set()
+        for card in soup.select("article"):
+            anchor = card.select_one("a[href*='/ref-']")
+            if not anchor:
                 continue
-            soup = BeautifulSoup(resp.text, "html.parser")
-            for a in soup.select("a[href*='/annonces-immobilieres/']"):
-                href = a.get("href") or ""
-                if "/ref-" not in href:
-                    continue
-                full = urljoin("https://www.entreparticuliers.com", href)
-                txt = " ".join(a.get_text(" ", strip=True).split())
-                if not txt:
-                    # Some anchors are image wrappers; text is in sibling anchor.
-                    continue
-                if full not in links:
-                    links[full] = txt
-            if links:
-                break
+            url = canonical_url(anchor.get("href") or "", "https://www.entreparticuliers.com")
+            if "/location/" not in url or url in seen:
+                continue
+            match = re.search(r"/ref-(\d+)$", url)
+            if not match:
+                continue
+            title = clean_text(anchor.get("aria-label"))
+            if not title:
+                description = card.select_one("p")
+                title = clean_text(description.get_text(" ", strip=True)) if description else None
+            text = card.get_text(" ", strip=True)
+            label = next((a.get_text(" ", strip=True) for a in card.select("a[href*='/ref-']") if re.search(r"\(\d{2,5}\)", a.get_text(" ", strip=True))), None)
+            rows.append(ScrapedListing(source=self.source, external_id=match.group(1), url=url, title=title,
+                price=parse_price_eur(text, monthly_only=True), surface_m2=parse_surface_m2(title or text),
+                rooms=parse_rooms(title or text), location=location_from_url(url, label),
+                images=card_images(card, "https://www.entreparticuliers.com") or None))
+            seen.add(url)
+        return rows
 
-        for href, txt in list(links.items())[:100]:
-            title = " ".join(txt.split()) if txt else None
-            price = None
-            surface = None
-            m_price = re.search(r"(\d[\d\s]{2,})\s*€", txt)
-            if m_price:
-                price = parse_int(m_price.group(1))
-            m_surface = re.search(r"(\d+(?:[.,]\d+)?)\s*m(?:²|2)", txt, re.IGNORECASE)
-            if m_surface:
-                surface = parse_float(m_surface.group(1))
-            rooms = None
-            m_rooms = re.search(r"(\d+)\s*pi[eè]ces?", txt, re.IGNORECASE)
-            if m_rooms:
-                rooms = parse_int(m_rooms.group(1))
-            elif "studio" in txt.lower():
-                rooms = 1
-
-            m_loc = re.search(r"([A-Za-zÀ-ÿ\-\s]+\(\d{5}\))", txt)
-            location = m_loc.group(1).strip() if m_loc else None
-
-            m_id = re.search(r"ref-(\d+)", href)
-            external_id = m_id.group(1) if m_id else hash_str(href)
-
-            yield ScrapedListing(
-                source=self.source,
-                external_id=external_id,
-                url=href,
-                title=title,
-                price=price,
-                surface_m2=surface,
-                location=location,
-                rooms=rooms,
-            )
+    def fetch_city(self, city: Optional[str], postal_code: Optional[str]) -> Iterable[ScrapedListing]:
+        for url in self._candidate_urls(city, postal_code):
+            html = fetch_html(url, referer="https://www.entreparticuliers.com/")
+            if not html:
+                continue
+            rows = self._parse_cards(html)
+            if rows:
+                yield from rows[:100]
+                return

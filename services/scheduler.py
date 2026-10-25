@@ -34,6 +34,8 @@ from services.matcher import match_and_score
 from services.scam import detect_scam
 from services.notification import send_alert
 from config import settings
+from utils.images import decode_images, encode_images
+from utils.fetch_diagnostics import capture_problems
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +51,7 @@ SCRAPERS = [
     OuestFranceImmoScraper(),
 ]
 _source_health: dict[str, dict] = {}
+_source_inflight: dict[str, dict] = {}
 # Timed-out synchronous fetches may keep running until their HTTP timeout.
 # Keep them out of asyncio's default executor, which Telegram's DNS lookups
 # also use, so slow portals cannot prevent the bot from replying.
@@ -151,7 +154,7 @@ def _health_from_run(run: m.SourceRun) -> dict:
     return {
         "consecutive_failures": 1 if run.status in {"failed", "partial"} else 0,
         "total_failures": 1 if run.status in {"failed", "partial"} else 0,
-        "total_success": 1 if run.status == "success" else 0,
+        "total_success": 1 if run.status == "success" and run.unique_count > 0 else 0,
         "total_runs": 1,
         "total_listings": run.unique_count,
         "last_listings_count": run.unique_count,
@@ -164,7 +167,7 @@ def _health_from_run(run: m.SourceRun) -> dict:
         "consecutive_empty_runs": 1 if run.unique_count == 0 else 0,
         "last_error": run.last_error,
         "last_failure_at": run.finished_at if run.status in {"failed", "partial"} else None,
-        "last_success_at": run.finished_at if run.status == "success" else None,
+        "last_success_at": run.finished_at if run.status == "success" and run.unique_count > 0 else None,
         "disabled_until": run.disabled_until,
         "last_cycle_seconds": run.duration_seconds,
         "last_locations_count": run.locations_count,
@@ -178,7 +181,8 @@ def get_sources_health() -> dict[str, dict]:
     out = {source: dict(raw) for source, raw in _source_health.items()}
     try:
         for run in repo.get_latest_source_runs(limit=50):
-            out.setdefault(run.source, _health_from_run(run))
+            if run.source not in out or not out[run.source].get("last_cycle_id"):
+                out[run.source] = _health_from_run(run)
     except Exception:
         pass
     return out
@@ -197,6 +201,8 @@ def get_scraper(source: str):
 
 
 def _source_enabled(source: str) -> bool:
+    if repo.get_runtime_setting(f"source_enabled:{source}") == "false":
+        return False
     h = _ensure_source_health(source)
     until = h.get("disabled_until")
     if not until:
@@ -234,7 +240,7 @@ def _record_source_result(cycle_id: str, result: SourceCollectResult, new_count:
     else:
         h["consecutive_empty_runs"] += 1
 
-    if result.status == "success":
+    if result.status == "success" and result.unique_count > 0:
         h["consecutive_failures"] = 0
         h["total_success"] += 1
         h["last_success_at"] = _now_utc()
@@ -344,6 +350,10 @@ def _match_reasons_text(reasons: list[str] | None) -> str | None:
 
 
 def _persist_listing_candidate(listing: ScrapedListing) -> repo.ListingSaveResult:
+    original = listing
+    listing = normalize_listing(listing)
+    if listing is None:
+        return repo.ListingSaveResult(listing=None, is_new=False, duplicate_reason="invalid_rental")
     metadata = _listing_metadata(listing)
     if listing.price is not None and listing.surface_m2 and not listing.price_per_m2 and listing.surface_m2 > 0:
         listing.price_per_m2 = listing.price / listing.surface_m2
@@ -358,21 +368,32 @@ def _persist_listing_candidate(listing: ScrapedListing) -> repo.ListingSaveResul
         location=listing.location,
         rooms=listing.rooms,
         description=listing.description,
-        images=",".join(listing.images) if listing.images else None,
+        images=encode_images(listing.images),
         published_at=listing.published_at,
+        last_seen_at=_now_utc(),
+        inventory_status="active",
         **metadata,
     )
     if saved.listing:
         listing.db_id = saved.listing.id
+        original.db_id = saved.listing.id
     return saved
 
 
 async def _deliver_listing_to_user_filter(bot: Bot, user: m.User, f: m.Filter, listing: ScrapedListing) -> ListingDeliveryResult:
+    if not user.telegram_id:
+        return ListingDeliveryResult(status="telegram_not_linked")
     res = match_and_score(f, listing)
     if not res.matched:
         return ListingDeliveryResult(status="not_matched")
 
     saved = _persist_listing_candidate(listing)
+    if saved.is_new and saved.listing:
+        from services.listing_details import resolve_new_listing
+        original_id=saved.listing.id
+        saved.listing = await resolve_new_listing(saved.listing)
+        saved.is_new=saved.listing.id==original_id
+        listing.db_id = saved.listing.id
     if not saved.listing:
         return ListingDeliveryResult(status="not_saved")
 
@@ -414,6 +435,12 @@ async def _deliver_listing_to_user_filter(bot: Bot, user: m.User, f: m.Filter, l
 
 async def _process_new_listing(bot: Bot, listing: ScrapedListing) -> bool:
     saved = _persist_listing_candidate(listing)
+    if saved.is_new and saved.listing:
+        from services.listing_details import resolve_new_listing
+        original_id=saved.listing.id
+        saved.listing = await resolve_new_listing(saved.listing)
+        saved.is_new=saved.listing.id==original_id
+        listing.db_id = saved.listing.id
     if not saved.listing:
         return False
     db_listing = saved.listing
@@ -426,7 +453,7 @@ async def _process_new_listing(bot: Bot, listing: ScrapedListing) -> bool:
     for f in filters:
         if f.user_id not in users_cache:
             u = repo.get_user_by_id(f.user_id)
-            if not u or not u.active:
+            if not u or not u.active or not u.telegram_id:
                 continue
             users_cache[f.user_id] = u
         user = users_cache[f.user_id]
@@ -490,11 +517,11 @@ async def _dispatch_pending(bot: Bot):
     now = datetime.utcnow()
     for pa in repo.fetch_due_pending_alerts(now):
         user = repo.get_user_by_id(pa.user_id)
-        if not user or not user.active:
+        if not user or not user.active or not user.telegram_id:
             repo.set_pending_alert_status(pa.id, "canceled")
             continue
         db_listing = repo.get_listing_by_id(pa.listing_id)
-        if not db_listing:
+        if not db_listing or not repo.is_current_listing(db_listing):
             repo.set_pending_alert_status(pa.id, "canceled")
             continue
         l = ScrapedListing(
@@ -508,7 +535,7 @@ async def _dispatch_pending(bot: Bot):
             location=db_listing.location,
             rooms=db_listing.rooms,
             description=db_listing.description,
-            images=db_listing.images.split(",") if db_listing.images else None,
+            images=decode_images(db_listing.images) or None,
             published_at=db_listing.published_at,
             db_id=db_listing.id,
         )
@@ -571,6 +598,12 @@ def _source_timeout_seconds(scraper) -> float:
     page), so they need a much larger budget than the HTTP-only scrapers.
     """
     base = max(8, settings.scraper_task_timeout_seconds)
+    from utils.scrapling import scrapling_enabled
+
+    if scrapling_enabled():
+        base = max(base, settings.scrapling_timeout_seconds * 2 + settings.flashproxy_timeout_seconds * 2 + 10)
+    if settings.firecrawl_enabled:
+        base = max(base, settings.scrapling_timeout_seconds * 2 + settings.firecrawl_timeout_seconds + 30)
     override = getattr(scraper, "timeout_seconds", None)
     if callable(override):
         try:
@@ -584,10 +617,13 @@ def _source_timeout_seconds(scraper) -> float:
     return float(base)
 
 
-async def _fetch_listings_non_blocking(scraper, city: str | None, postal: str | None) -> list[ScrapedListing]:
+async def _fetch_listings_non_blocking(scraper, city: str | None, postal: str | None, problems: list[str] | None = None) -> list[ScrapedListing]:
     loop = asyncio.get_running_loop()
+    def fetch():
+        with capture_problems(problems if problems is not None else []):
+            return list(scraper.fetch_city(city, postal))
     return await asyncio.wait_for(
-        loop.run_in_executor(_scraper_executor, lambda: list(scraper.fetch_city(city, postal))),
+        loop.run_in_executor(_scraper_executor, fetch),
         timeout=_source_timeout_seconds(scraper),
     )
 
@@ -595,7 +631,8 @@ async def _fetch_listings_non_blocking(scraper, city: str | None, postal: str | 
 async def _collect_one_location(scraper, city: str | None, postal: str | None) -> LocationFetchResult:
     result = LocationFetchResult(city=city, postal=postal)
     try:
-        raw = await _fetch_listings_non_blocking(scraper, city, postal)
+        problems: list[str] = []
+        raw = await _fetch_listings_non_blocking(scraper, city, postal, problems)
         result.raw_count = len(raw)
         for listing in raw:
             item = normalize_listing(listing, fallback_city=city, fallback_postal=postal)
@@ -604,6 +641,9 @@ async def _collect_one_location(scraper, city: str | None, postal: str | None) -
                 result.normalized_count += 1
             else:
                 result.dropped_count += 1
+        if not result.listings and (problems or raw):
+            result.error_count = 1
+            result.error = "; ".join(problems)[:400] if problems else "all_records_rejected_by_quality_checks"
     except asyncio.TimeoutError:
         result.timeout_count = 1
         result.error = f"timeout for {city}/{postal}"
@@ -619,12 +659,25 @@ async def _collect_one_location(scraper, city: str | None, postal: str | None) -
 
 
 async def _collect_source_listings(scraper, locs: list[tuple[str | None, str | None]]) -> SourceCollectResult:
+    identifier=uuid4().hex
+    progress={"id":identifier,"source":scraper.source,"started_at":_now_utc().isoformat()+"Z","locations_count":len(locs),"completed":0}
+    _source_inflight[identifier]=progress
+    try:
+        return await _collect_source_listings_impl(scraper,locs,progress)
+    finally:
+        _source_inflight.pop(identifier,None)
+
+
+async def _collect_source_listings_impl(scraper, locs, progress):
     started = _now_utc()
     sem = asyncio.Semaphore(max(1, settings.per_source_concurrency))
 
     async def _bounded(city: str | None, postal: str | None) -> LocationFetchResult:
         async with sem:
-            return await _collect_one_location(scraper, city, postal)
+            try:
+                return await _collect_one_location(scraper, city, postal)
+            finally:
+                progress["completed"]+=1
 
     tasks = [asyncio.create_task(_bounded(city, postal)) for city, postal in locs]
     gathered = await asyncio.gather(*tasks, return_exceptions=True) if tasks else []
@@ -664,8 +717,11 @@ async def _collect_source_listings(scraper, locs: list[tuple[str | None, str | N
 
     if timeout_count or error_count:
         status = "partial" if unique else "failed"
-    else:
+    elif unique:
         status = "success"
+    else:
+        status = "empty"
+        errors.append("No rental extracted; source availability could not be confirmed")
 
     return SourceCollectResult(
         source=scraper.source,

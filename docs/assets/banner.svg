@@ -1,58 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="480" viewBox="0 0 1280 480" role="img" aria-labelledby="title desc">
-  <title id="title">ImmoAlert — Votre radar immobilier sur Telegram</title>
-  <desc id="desc">Bannière violette et cyan avec un radar, une maison et une carte d’annonce fictive.</desc>
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#17132e"/><stop offset="0.6" stop-color="#0d1422"/><stop offset="1" stop-color="#101f30"/></linearGradient>
-    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#b69bff"/><stop offset="1" stop-color="#6ce7e2"/></linearGradient>
-    <linearGradient id="card" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#24334c"/><stop offset="1" stop-color="#172333"/></linearGradient>
-    <radialGradient id="glow"><stop stop-color="#8b5cf6" stop-opacity="0.22"/><stop offset="1" stop-color="#8b5cf6" stop-opacity="0"/></radialGradient>
-    <clipPath id="bounds"><rect width="1280" height="480" rx="28"/></clipPath>
-  </defs>
-  <g clip-path="url(#bounds)">
-    <rect width="1280" height="480" fill="url(#bg)"/>
-    <ellipse cx="205" cy="100" rx="390" ry="370" fill="url(#glow)"/>
-    <g fill="none" stroke="#65d9dd" stroke-opacity="0.09">
-      <circle cx="1085" cy="190" r="124"/><circle cx="1085" cy="190" r="207"/><circle cx="1085" cy="190" r="290"/><circle cx="1085" cy="190" r="373"/>
-      <path d="M712 190h746M1085-183v746M821-74l528 528M821 454l528-528"/>
-    </g>
-    <path d="M1085 190L984-82A290 290 0 0 1 1357 89Z" fill="#69dfdc" opacity="0.045"/>
-    <g font-family="Arial, Helvetica, sans-serif">
-      <rect x="72" y="62" width="48" height="48" rx="14" fill="#a78bfa" fill-opacity="0.13" stroke="#a78bfa" stroke-opacity="0.5"/>
-      <path d="M84 87l12-10 12 10M87 85v14h18V85M94 99v-8h5v8" fill="none" stroke="url(#accent)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-      <text x="135" y="97" fill="#f4f0ff" font-size="32" font-weight="700" letter-spacing="1">ImmoAlert</text>
-      <text x="74" y="154" fill="#a99dce" font-size="12" letter-spacing="3.2">LE RADAR IMMOBILIER SUR TELEGRAM</text>
-      <text x="70" y="223" fill="#f4f2ff" font-size="58" font-weight="700" letter-spacing="-2">Votre recherche.</text>
-      <text x="70" y="283" fill="url(#accent)" font-size="48" font-weight="700" letter-spacing="-1.4">Votre prochaine adresse.</text>
-      <text x="74" y="326" fill="#b2b9cc" font-size="18">Les annonces qui vous intéressent, dans une seule conversation.</text>
-      <g font-size="13" font-weight="600" fill="#d4d6e6">
-        <rect x="73" y="362" width="140" height="35" rx="17.5" fill="#c2a8ff" fill-opacity="0.08" stroke="#b39bd4" stroke-opacity="0.22"/>
-        <text x="93" y="384">8 connecteurs</text>
-        <rect x="224" y="362" width="160" height="35" rx="17.5" fill="#c2a8ff" fill-opacity="0.08" stroke="#b39bd4" stroke-opacity="0.22"/>
-        <text x="245" y="384">Filtres personnels</text>
-        <rect x="395" y="362" width="142" height="35" rx="17.5" fill="#c2a8ff" fill-opacity="0.08" stroke="#b39bd4" stroke-opacity="0.22"/>
-        <text x="417" y="384">Auto-hébergé</text>
-      </g>
-      <circle cx="79" cy="437" r="3.5" fill="#66ddc3"/>
-      <text x="92" y="442" fill="#8491ac" font-size="12" letter-spacing="1">PYTHON / TELEGRAM / DOCKER</text>
-      <text x="1196" y="442" text-anchor="end" fill="#7f8fa5" font-size="12">Un projet de ZEBDA</text>
-      <g transform="rotate(-4 996 236)">
-        <rect x="793" y="108" width="413" height="278" rx="22" fill="#020812" opacity="0.32"/>
-        <rect x="787" y="99" width="413" height="278" rx="22" fill="url(#card)" stroke="#9eb0cb" stroke-opacity="0.24"/>
-        <circle cx="823" cy="135" r="7" fill="#8e7af2"/>
-        <text x="842" y="140" fill="#a9d5dd" font-size="13" letter-spacing="0.4">NOUVELLE OPPORTUNITÉ</text>
-        <text x="815" y="185" fill="#f3f5fb" font-size="23" font-weight="700">Appartement lumineux · T2</text>
-        <text x="815" y="230" fill="#f2efff" font-size="37" font-weight="700">850 €</text>
-        <text x="938" y="228" fill="#a5b4c7" font-size="17">48 m² · 2 pièces</text>
-        <path d="M820 257c0-9 12-9 12 0 0 5-6 10-6 10s-6-5-6-10Z" fill="none" stroke="#81c3d0" stroke-width="1.7"/>
-        <circle cx="826" cy="256" r="1.8" fill="#81c3d0"/>
-        <text x="842" y="263" fill="#bdc8d9" font-size="15">Mantes-la-Jolie · 78200</text>
-        <rect x="814" y="286" width="356" height="48" rx="12" fill="#8b5cf6" fill-opacity="0.18" stroke="#a78bfa" stroke-opacity="0.34"/>
-        <text x="992" y="316" text-anchor="middle" fill="#ddd2ff" font-size="15" font-weight="600">Ouvrir l’annonce</text>
-        <text x="1169" y="356" text-anchor="end" fill="#8190a8" font-size="11">Annonce fictive · illustration</text>
-      </g>
-      <circle cx="1182" cy="81" r="34" fill="#1c91c9"/>
-      <path d="M1163 80l35-14-8 32-12-10-7 5 2-11 18-10-20 8Z" fill="#f4fbff"/>
-    </g>
-    <rect x="0.5" y="0.5" width="1279" height="479" rx="27.5" fill="none" stroke="#a59dd1" stroke-opacity="0.18"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="540" viewBox="0 0 1600 540" role="img" aria-labelledby="title description">
+  <title id="title">ImmoAlert — Le bon signal immobilier, sur le web et dans Telegram</title>
+  <desc id="description">Huit sources, fiches détaillées et biens regroupés. Site immoalert.work.gd, accès sur invitation.</desc>
+  <defs><pattern id="grid" width="56" height="56" patternUnits="userSpaceOnUse"><path d="M56 0H0v56" fill="none" stroke="#35382e" stroke-width="1"/></pattern></defs>
+  <rect width="1600" height="540" rx="14" fill="#10110f"/><rect x="1000" width="600" height="540" fill="url(#grid)" opacity=".45"/>
+  <path d="M56 90h1488M56 468h1488" stroke="#35382e"/>
+  <text x="56" y="60" font-family="Arial,Helvetica,sans-serif" font-size="30" font-weight="900" letter-spacing="-1" fill="#eeeee5">IMMO<tspan fill="#dcff43">//</tspan>ALERT<tspan fill="#dcff43">.</tspan></text>
+  <text x="340" y="54" font-family="monospace" font-size="12" letter-spacing="2" fill="#929589">LE FLUX IMMOBILIER INDÉPENDANT</text>
+  <rect x="1351" y="40" width="6" height="6" fill="#dcff43"/><text x="1371" y="50" font-family="monospace" font-size="12" letter-spacing="2" fill="#b0b6a1">WEB + TELEGRAM</text>
+  <text x="56" y="148" font-family="monospace" font-size="13" letter-spacing="3" fill="#b0b6a1">REPÉRER. FILTRER. DÉCIDER.</text>
+  <text x="52" y="236" font-family="Arial,Helvetica,sans-serif" font-size="76" font-weight="900" letter-spacing="-3" fill="#eeeee5">LE BON SIGNAL.</text>
+  <text x="54" y="311" font-family="Arial,Helvetica,sans-serif" font-size="51" font-weight="900" letter-spacing="-2" fill="#dcff43">SUR LE WEB. DANS TELEGRAM.</text>
+  <text x="58" y="361" font-family="Arial,Helvetica,sans-serif" font-size="20" fill="#b0b6a1">Tes recherches. Tes repérages. Un bien, plusieurs plateformes.</text>
+  <g font-family="monospace" font-size="12" fill="#c9d0b8"><rect x="56" y="399" width="121" height="32" fill="#1c2117" stroke="#465735"/><text x="72" y="420">8 SOURCES</text><rect x="189" y="399" width="179" height="32" fill="#1c2117" stroke="#465735"/><text x="205" y="420">FICHES DÉTAILLÉES</text><rect x="380" y="399" width="178" height="32" fill="#1c2117" stroke="#465735"/><text x="396" y="420">BIENS REGROUPÉS</text></g>
+  <g transform="translate(1080 130)"><rect width="455" height="272" rx="8" fill="#171c11" stroke="#617048"/><path d="M0 42h455" stroke="#35382e"/><circle cx="20" cy="22" r="4" fill="#dcff43"/><circle cx="36" cy="22" r="4" fill="#465735"/><circle cx="52" cy="22" r="4" fill="#465735"/>
+  <text x="74" y="26" font-family="monospace" font-size="10" letter-spacing="1" fill="#929589">UN SEUL FLUX / TES CRITÈRES</text><rect x="22" y="61" width="170" height="111" fill="#718665"/><path d="M49 127l57-42 59 42v35H49z" fill="#c9d0ae"/><path d="M40 129l66-51 68 51" fill="none" stroke="#eeeee5" stroke-width="5"/><rect x="95" y="126" width="26" height="36" fill="#536c4f"/>
+  <text x="215" y="84" font-family="monospace" font-size="10" letter-spacing="1" fill="#929589">UN BIEN / 2 PLATEFORMES</text><text x="213" y="127" font-family="Arial,sans-serif" font-size="39" font-weight="900" fill="#dcff43">850 €</text><text x="215" y="156" font-family="monospace" font-size="12" fill="#c9d0ae">45 M² · 2 PIÈCES</text>
+  <path d="M22 192h411" stroke="#35382e"/><text x="22" y="219" font-family="Arial,sans-serif" font-size="14" fill="#eeeee5">Fiche complète · galerie · localisation</text><rect x="22" y="235" width="411" height="20" fill="#dcff43"/><text x="37" y="249" font-family="monospace" font-size="10" fill="#10110f">+ UNE SEULE ALERTE POUR CE BIEN</text></g>
+  <text x="56" y="507" font-family="monospace" font-size="12" letter-spacing="2" fill="#929589">ACCÈS SUR INVITATION · TELEGRAM FACULTATIF</text>
+  <text x="1232" y="509" font-family="monospace" font-size="21" fill="#dcff43">immoalert.work.gd</text>
 </svg>

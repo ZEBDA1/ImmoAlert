@@ -1,71 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
-  <title id="title">Configurer sa recherche, recevoir les annonces</title>
-  <desc id="desc">Deux maquettes de conversation Telegram : le panneau de commandes ImmoAlert et une alerte pour un appartement fictif à Mantes-la-Jolie.</desc>
-  <defs>
-    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#111324"/><stop offset="1" stop-color="#0d1825"/></linearGradient>
-    <linearGradient id="chat" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#111e2e"/><stop offset="1" stop-color="#0d1725"/></linearGradient>
-  </defs>
-  <rect width="1280" height="720" rx="24" fill="url(#background)"/>
-  <g font-family="Arial, Helvetica, sans-serif">
-    <text x="58" y="57" fill="#eae7f8" font-size="24" font-weight="700">Une recherche. Une conversation.</text>
-    <text x="58" y="85" fill="#8f9cb5" font-size="15">Définissez vos critères, puis gardez les annonces qui comptent.</text>
-    <g transform="translate(58 119)">
-      <rect width="494" height="520" rx="20" fill="url(#chat)" stroke="#49526f" stroke-opacity="0.6"/>
-      <path d="M20 0h454a20 20 0 0 1 20 20v56H0V20A20 20 0 0 1 20 0Z" fill="#1d2d43"/>
-      <circle cx="40" cy="38" r="20" fill="#7c5cce"/>
-      <path d="M29 39l11-9 11 9M32 37v12h16V37M38 49v-7h5v7" stroke="#f2ecff" fill="none" stroke-width="1.6" stroke-linejoin="round"/>
-      <text x="72" y="34" fill="#f1f4fa" font-size="18" font-weight="700">ImmoAlert</text>
-      <text x="72" y="55" fill="#82a3c4" font-size="12">bot</text>
-      <rect x="350" y="93" width="120" height="37" rx="12" fill="#31475f"/>
-      <text x="371" y="117" fill="#f3f5ff" font-size="15">/start</text>
-      <rect x="22" y="148" width="407" height="127" rx="14" fill="#1e3046"/>
-      <text x="40" y="179" fill="#e7e7f7" font-size="19" font-weight="700">ImmoAlert — radar immobilier</text>
-      <text x="40" y="208" fill="#bac9da" font-size="15">Statut : FREE</text>
-      <text x="40" y="232" fill="#bac9da" font-size="15">Filtres actifs : 1</text>
-      <text x="40" y="257" fill="#bac9da" font-size="15">Choisis une action dans le panneau.</text>
-      <text x="24" y="308" fill="#7990aa" font-size="11" letter-spacing="1.5">VOTRE PANNEAU</text>
-      <g fill="#273950" stroke="#8aa6d0" stroke-opacity="0.14">
-        <rect x="22" y="326" width="219" height="43" rx="9"/>
-        <rect x="251" y="326" width="219" height="43" rx="9"/>
-        <rect x="22" y="379" width="219" height="43" rx="9"/>
-        <rect x="251" y="379" width="219" height="43" rx="9"/>
-        <rect x="22" y="432" width="219" height="43" rx="9"/>
-        <rect x="251" y="432" width="219" height="43" rx="9"/>
-      </g>
-      <g fill="#dce6f3" font-size="14" text-anchor="middle">
-        <text x="132" y="353">Mon radar</text><text x="360" y="353">Mes critères</text>
-        <text x="132" y="406">Configurer mes filtres</text><text x="360" y="406">Gérer mes filtres</text>
-        <text x="132" y="459">Mes favoris</text><text x="360" y="459">Pause alertes</text>
-      </g>
-    </g>
-    <g fill="none" stroke="#957be4" stroke-width="2">
-      <path d="M579 374h95" stroke-dasharray="5 7"/><path d="M665 365l10 9-10 9" stroke-linecap="round" stroke-linejoin="round"/>
-    </g>
-    <text x="627" y="404" text-anchor="middle" fill="#9f90c8" font-size="11" letter-spacing="1">VEILLE</text>
-    <g transform="translate(704 119)">
-      <rect width="518" height="520" rx="20" fill="url(#chat)" stroke="#49526f" stroke-opacity="0.6"/>
-      <path d="M20 0h478a20 20 0 0 1 20 20v56H0V20A20 20 0 0 1 20 0Z" fill="#1d2d43"/>
-      <circle cx="40" cy="38" r="20" fill="#7c5cce"/>
-      <path d="M29 39l11-9 11 9M32 37v12h16V37M38 49v-7h5v7" stroke="#f2ecff" fill="none" stroke-width="1.6" stroke-linejoin="round"/>
-      <text x="72" y="34" fill="#f1f4fa" font-size="18" font-weight="700">ImmoAlert</text>
-      <text x="72" y="55" fill="#82a3c4" font-size="12">bot</text>
-      <rect x="22" y="96" width="474" height="278" rx="14" fill="#1e3046"/>
-      <text x="42" y="127" fill="#ad9ae9" font-size="13" font-weight="700" letter-spacing="0.9">NOUVELLE OPPORTUNITÉ</text>
-      <text x="42" y="163" fill="#f0f3fc" font-size="21" font-weight="700">Appartement lumineux · T2</text>
-      <text x="42" y="190" fill="#8aa6c4" font-size="13">PAP · pap.fr</text>
-      <text x="42" y="230" fill="#f1f3fa" font-size="29" font-weight="700">850 €</text>
-      <text x="144" y="228" fill="#d1dbe9" font-size="17">48 m² · 2 p.</text>
-      <text x="42" y="259" fill="#bed0e2" font-size="15">Mantes-la-Jolie (78200)</text>
-      <text x="42" y="295" fill="#b8c4d8" font-size="14">Un appartement avec balcon, proche de la gare.</text>
-      <rect x="41" y="315" width="164" height="31" rx="15" fill="#4fc2a2" fill-opacity="0.13"/>
-      <text x="57" y="336" fill="#83dfc7" font-size="13">Matching : Bon prix</text>
-      <rect x="22" y="386" width="474" height="43" rx="10" fill="#296588" stroke="#3da0bb" stroke-opacity="0.3"/>
-      <text x="259" y="413" text-anchor="middle" fill="#e1f2fa" font-size="15" font-weight="600">Ouvrir l’annonce</text>
-      <rect x="22" y="439" width="474" height="43" rx="10" fill="#4b3f75" stroke="#a68ad8" stroke-opacity="0.35"/>
-      <path d="M173 454c-7-7-16 3-8 10l8 7 8-7c8-7-1-17-8-10Z" fill="#c4a8ff"/>
-      <text x="287" y="466" text-anchor="middle" fill="#e6dcff" font-size="15" font-weight="600">Garder cette annonce</text>
-    </g>
-    <text x="58" y="681" fill="#7b879e" font-size="12">Illustration de l’interface · annonce et données fictives</text>
-    <text x="1222" y="681" text-anchor="end" fill="#8f7cbd" font-size="12" letter-spacing="1">ImmoAlert / ZEBDA</text>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="710" viewBox="0 0 1400 710" role="img" aria-labelledby="title desc">
+  <title id="title">Aperçu illustré d’une alerte Telegram ImmoAlert</title><desc id="desc">Bien fictif avec loyer, surface, localisation et boutons Ouvrir l’annonce, Plus d’informations et Garder cette annonce.</desc>
+  <rect width="1400" height="710" rx="12" fill="#10110f"/><path stroke="#35382e" d="M50 93h1300M760 140v505"/>
+  <text x="50" y="61" font-family="Arial,sans-serif" font-size="29" font-weight="900" fill="#eeeee5">IMMO<tspan fill="#dcff43">//</tspan>ALERT.</text><text x="1030" y="58" font-family="monospace" font-size="12" fill="#929589">ILLUSTRATION / DONNÉES FICTIVES</text>
+  <text x="50" y="170" font-family="monospace" font-size="12" letter-spacing="3" fill="#929589">TELEGRAM / LES ALERTES</text><text x="47" y="244" font-family="Arial,sans-serif" font-size="54" font-weight="900" fill="#eeeee5">LE BIEN ARRIVE.</text><text x="47" y="308" font-family="Arial,sans-serif" font-size="54" font-weight="900" fill="#dcff43">TU GARDES LA MAIN.</text>
+  <g font-family="Arial,sans-serif" font-size="20" fill="#b0b6a1"><text x="52" y="375">Les critères utiles dans le message.</text><text x="52" y="413">La description complète sur demande.</text><text x="52" y="451">Les photos et la carte sur le site.</text></g>
+  <rect x="50" y="511" width="593" height="66" fill="#1c2117" stroke="#465735"/><text x="70" y="540" font-family="monospace" font-size="13" fill="#dcff43">UN BIEN, PLUSIEURS PUBLICATIONS</text><text x="70" y="561" font-family="Arial,sans-serif" font-size="14" fill="#b0b6a1">Les publications concordantes partagent leur historique d’alerte.</text>
+  <g transform="translate(822 126)"><rect width="508" height="500" rx="18" fill="#182425" stroke="#3a5050"/><path d="M0 53h508" stroke="#3a5050"/><circle cx="31" cy="27" r="13" fill="#dcff43"/><text x="56" y="32" font-family="Arial,sans-serif" font-size="18" font-weight="700" fill="#eeeee5">ImmoAlert</text><text x="433" y="31" font-family="monospace" font-size="11" fill="#929589">BOT</text>
+  <rect x="19" y="72" width="470" height="118" rx="7" fill="#718665"/><path d="M196 140l57-43 57 43v33H196z" fill="#d2d8bd"/><path d="M188 141l65-51 65 51" fill="none" stroke="#eeeee5" stroke-width="5"/>
+  <text x="26" y="222" font-family="Arial,sans-serif" font-size="17" font-weight="700" fill="#eeeee5">Nouvelle opportunité</text><text x="26" y="249" font-family="Arial,sans-serif" font-size="19" font-weight="700" fill="#eeeee5">Appartement lumineux avec balcon</text>
+  <text x="26" y="277" font-family="monospace" font-size="13" fill="#b0b6a1">PAP · pap.fr</text><text x="26" y="306" font-family="Arial,sans-serif" font-size="19" font-weight="700" fill="#dcff43">850 € · 45 m² · 2 pièces</text><text x="26" y="335" font-family="Arial,sans-serif" font-size="15" fill="#c9d0ae">Rouen (76000) · charges comprises</text>
+  <g font-family="Arial,sans-serif" font-size="15" text-anchor="middle" fill="#eeeee5"><rect x="19" y="360" width="470" height="34" rx="5" fill="#304443"/><text x="254" y="382">Ouvrir l’annonce</text><rect x="19" y="402" width="470" height="34" rx="5" fill="#536c4f"/><text x="254" y="424">Plus d’informations</text><rect x="19" y="444" width="470" height="34" rx="5" fill="#304443"/><text x="254" y="466">Garder cette annonce</text></g></g>
+  <text x="50" y="672" font-family="monospace" font-size="12" fill="#929589">APERÇU VECTORIEL · AUCUNE ANNONCE RÉELLE · VOIR docs/assets/README.md</text>
 </svg>

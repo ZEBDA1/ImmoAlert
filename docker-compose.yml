@@ -13,6 +13,8 @@ services:
       PYTHONIOENCODING: UTF-8
       USE_SELENIUM_FALLBACK: "false"
       TZ: UTC
+    ports:
+      - "127.0.0.1:8088:8088"
     volumes:
       - ./storage:/app/storage
     healthcheck:

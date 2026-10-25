@@ -21,7 +21,29 @@ docker compose ps
 docker compose logs -f tgbbot
 ```
 
-L’image contient Python 3.11, Chromium, Node.js 22 et Firecrawl CLI 1.26.22. Aucun port public n’est nécessaire : le bot utilise le polling Telegram. Un seul processus doit effectuer le polling pour un même jeton.
+L’image contient Python 3.11, Chromium, Node.js 22 et Firecrawl CLI 1.26.22. Elle construit aussi le frontend depuis `web/` et l’embarque dans `/app/web_dist`. Aucun port public n’est nécessaire pour le bot seul : il utilise le polling Telegram. Un seul processus doit effectuer le polling pour un même jeton.
+
+## Site et accès administrateur
+
+Le site public du projet est [immoalert.work.gd](https://immoalert.work.gd), avec des comptes sur invitation. Pour héberger sa propre instance, activer le serveur web dans `.env` :
+
+```dotenv
+WEB_ENABLED=true
+WEB_SITE_URL=http://localhost:8088
+WEB_PORT=8088
+WEB_DIST_PATH=/app/web_dist
+```
+
+Compose publie l’API et le site uniquement sur `127.0.0.1:8088`. Utiliser un reverse proxy HTTPS ou la méthode Funnel du [guide Plesk](PLESK.md) pour un accès distant. Ne pas utiliser l’adresse de l’instance publique comme origine de sa propre installation.
+
+Après recréation du conteneur, créer un premier administrateur local :
+
+```bash
+docker compose up -d --force-recreate tgbbot
+docker compose exec tgbbot python scripts/create_web_admin.py --login administrateur
+```
+
+Conserver immédiatement le mot de passe généré. L’administration propose ensuite **Accès → Créer un accès** pour les membres. Un administrateur configuré dans `ADMIN_TELEGRAM_IDS` peut aussi démarrer depuis la connexion Telegram. [Fonctionnement des sessions et rôles](WEB.md).
 
 ## Stockage et santé
 
@@ -42,7 +64,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-Les migrations incluses créent les tables manquantes et ajoutent des colonnes pour les fonctionnalités du bot. Une sauvegarde avant mise à jour permet de revenir aux données précédentes en cas d’échec.
+Les migrations créent les tables et colonnes manquantes. Pour les anciennes bases SQLite, la table `users` est reconstruite en conservant ses identifiants et index afin de rendre Telegram facultatif ; les relations sont contrôlées. Sauvegarder la base avant une mise à jour pour pouvoir revenir à l’état précédent en cas d’échec.
 
 Pour une modification de configuration seule :
 

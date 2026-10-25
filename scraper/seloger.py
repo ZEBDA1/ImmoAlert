@@ -1,23 +1,4 @@
-"""SeLoger rental scraper.
-
-SeLoger is the hardest French portal to scrape:
-
-* every path now requires a trailing ``adXXfrYY`` **place id** – without it the
-  server answers ``410 Gone`` (this is why the previous
-  ``https://www.seloger.com/list.htm?q=...`` implementation never worked);
-* the results grid is rendered client-side and protected by DataDome;
-* the documented ``serp-bff`` endpoints need a valid browser session.
-
-Strategy:
-
-1. **Discover** the canonical result URL once per city with ``firecrawl search``
-   (the SERP is indexed with its place id). It is cached for a long time by
-   :class:`~utils.cache.TTLCache`.
-2. **Extract** the listings from that URL with ``firecrawl scrape`` driven by
-   :data:`~scraper.firecrawl_helpers.LISTING_SCHEMA`, paging with ``?page=N``.
-3. **Fallback** to parsing the markdown Firecrawl returns (and to the legacy
-   Playwright/HTML path) when the structured extraction comes back empty.
-"""
+"""SeLoger rentals: verified/native HTML first, Firecrawl extraction as backup."""
 
 from __future__ import annotations
 
@@ -69,14 +50,19 @@ class SeLogerScraper(BaseScraper):
     # ------------------------------------------------------------------
     # URL discovery
     # ------------------------------------------------------------------
-    def _discover_result_url(self, city: Optional[str], postal_code: Optional[str]) -> Optional[str]:
+    def _discover_result_url(self, city: Optional[str], postal_code: Optional[str], *, allow_firecrawl: bool = True) -> Optional[str]:
         """Find a working SeLoger search URL (with its ``adXXfrYY`` place id)."""
         cache_key = f"{(city or '').strip().lower()}|{(postal_code or '').strip()}"
         cached = _PLACE_CACHE.get(cache_key)
         if cached:
             return cached
 
-        if not firecrawl_available():
+        from utils.locations import verified_portal_route
+        if verified := verified_portal_route(self.source, city, postal_code):
+            _PLACE_CACHE.set(cache_key, verified)
+            return verified
+
+        if not allow_firecrawl or not firecrawl_available():
             return None
 
         postal = re.sub(r"\D", "", postal_code or "")
@@ -99,7 +85,8 @@ class SeLogerScraper(BaseScraper):
                 log.info("seloger discovery search failed for %r: %s", query, exc)
                 continue
             url = find_seloger_place_url(results)
-            if url:
+            from utils.locations import city_slug
+            if url and "/recherche/location/" in url and (not city or city_slug(city) in url):
                 # Some hits are scoped to the right department but for another city;
                 # keep them anyway, SeLoger resolves the place id.
                 if dept and f"ad{dept}fr" not in url.lower() and "/recherche/" in url:
@@ -191,17 +178,24 @@ class SeLogerScraper(BaseScraper):
             return []
         candidates = [
             f"https://www.seloger.com/list.htm?q={term}",
-            f"https://www.seloger.com/annonces/achat/appartement/{slugify_city(city)}-{term}/liste.htm"
+            f"https://www.seloger.com/annonces/locations/appartement/{slugify_city(city)}-{term}/liste.htm"
             if city
             else f"https://www.seloger.com/list.htm?q={term}",
         ]
+        # Reuse the canonical place URL discovered by Firecrawl, even while its
+        # quota is exhausted. The legacy URLs alone may return 410 Gone.
+        cache_key = f"{(city or '').strip().lower()}|{(postal_code or '').strip()}"
+        if discovered := (_PLACE_CACHE.get(cache_key) or self._discover_result_url(city, postal_code, allow_firecrawl=False)):
+            candidates.insert(0, discovered)
 
         for url in candidates:
             html = fetch_html(url, referer="https://www.seloger.com/")
             if not html:
                 continue
             soup = BeautifulSoup(html, "html.parser")
-            cards = soup.select(".c-pa-list .c-pa-list_item a") or soup.select("a[href*='/annonce/']")
+            cards = soup.select(".c-pa-list .c-pa-list_item a") or soup.select(
+                "a[href*='/annonce/'], a[href*='/annonces/']"
+            )
             if not cards:
                 continue
 
@@ -212,7 +206,7 @@ class SeLogerScraper(BaseScraper):
                     continue
                 if href.startswith("/"):
                     href = "https://www.seloger.com" + href
-                if "/annonce/" not in href:
+                if "/annonce/" not in href and "/annonces/" not in href:
                     continue
                 title = anchor.get_text(" ", strip=True) or None
                 price_text = anchor.find_next(string=lambda s: s and "€" in s)
@@ -345,26 +339,17 @@ class SeLogerScraper(BaseScraper):
     # Public API
     # ------------------------------------------------------------------
     def fetch_city(self, city: Optional[str], postal_code: Optional[str]) -> Iterable[ScrapedListing]:
-        firecrawl_rows: list[ScrapedListing] = []
+        from scraper.quality import normalize_listing
         try:
-            firecrawl_rows = self._fetch_with_firecrawl(city, postal_code)
-        except Exception as exc:  # pragma: no cover - defensive
-            log.warning("seloger firecrawl path failed for %s/%s: %s", city, postal_code, exc)
-
-        if len(firecrawl_rows) >= 5:
-            for row in firecrawl_rows:
-                yield row
+            primary = [valid for row in self._legacy_html(city, postal_code)
+                       if (valid := normalize_listing(row)) is not None]
+        except Exception as exc:
+            log.info("seloger primary failed (%s)", type(exc).__name__)
+            primary = []
+        if primary:
+            yield from primary
             return
-
-        legacy_rows: list[ScrapedListing] = []
-        for loader in (self._legacy_html, self._search_api):
-            try:
-                legacy_rows = loader(city, postal_code)
-            except Exception as exc:  # pragma: no cover - defensive
-                log.info("seloger fallback %s failed for %s/%s: %s", loader.__name__, city, postal_code, exc)
-                legacy_rows = []
-            if legacy_rows:
-                break
-
-        for row in merge_listings(firecrawl_rows, legacy_rows):
-            yield row
+        try:
+            yield from self._fetch_with_firecrawl(city, postal_code)
+        except Exception as exc:
+            log.info("seloger backup failed (%s)", type(exc).__name__)
