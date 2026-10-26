@@ -7,6 +7,7 @@ import json
 from hashlib import sha256
 import logging
 import threading
+from time import perf_counter
 from urllib.parse import urlsplit
 
 import requests
@@ -23,6 +24,12 @@ _slots=asyncio.Semaphore(2)
 _tasks: dict[int,asyncio.Task]={}
 _geo_lock=threading.Lock()
 _merge_lock=threading.Lock()
+
+
+def details_are_fresh(row):
+    """Use the same persistent cache policy for web, bot and workers."""
+    cooldown=timedelta(hours=24) if row.details_status=="complete" else timedelta(minutes=15)
+    return bool(row.details_checked_at and row.details_checked_at>datetime.utcnow()-cooldown)
 
 
 def _city_point(location):
@@ -55,11 +62,12 @@ def _city_point(location):
 
 
 def _load(identifier):
+    from services import performance
+    started=perf_counter()
     row=repo.get_listing_by_id(identifier)
-    if not row:
+    if not row or row.removed_at is not None:
         return None
-    cooldown=timedelta(hours=24) if row.details_status=="complete" else timedelta(minutes=15)
-    if row.details_checked_at and row.details_checked_at>datetime.utcnow()-cooldown:
+    if details_are_fresh(row):
         return row
     merged={"images":[],"features":{}}
     try:
@@ -71,7 +79,11 @@ def _load(identifier):
             host=(urlsplit(pub["url"]).hostname or "").lower()
             if not any(host==h or host.endswith("."+h) for h in hosts):
                 continue
-            html=fetch_html(pub["url"],timeout=18)
+            portal_started=perf_counter()
+            try:
+                html=fetch_html(pub["url"],timeout=18)
+            finally:
+                performance.elapsed("portal_collect",portal_started,pub["source"])
             if not html:
                 continue
             # Portal IDs are stored separately because a canonical property may
@@ -95,6 +107,8 @@ def _load(identifier):
             merged.update(latitude=point[1],longitude=point[0],geo_precision="city")
     with repo.session_scope() as session:
         current=session.get(m.Listing,row.id)
+        if not current or current.removed_at is not None:
+            return current
         if len(merged.get("description",""))>len(current.description or ""):
             current.description=merged["description"]
         current.images=encode_images(merge_images(merged["images"],current.images))
@@ -106,27 +120,47 @@ def _load(identifier):
                 setattr(current,key,merged[key])
         current.details_checked_at=datetime.utcnow()
         current.details_status="complete" if merged.get("description") or merged["features"] or merged["images"] else "partial"
+    performance.elapsed("detail_collect",started,row.source)
     return repo.get_listing_by_id(row.id)
 
 
 async def get_listing_details(identifier: int):
+    from services import performance
+    started=perf_counter()
     row=await asyncio.to_thread(repo.get_listing_by_id,identifier)
-    if not row:
+    performance.elapsed("detail_db",started)
+    if not row or row.removed_at is not None:
         return None
     identifier=row.id
+    if identifier not in _tasks and details_are_fresh(row):
+        performance.record("cache_age",max(0,(datetime.utcnow()-row.details_checked_at).total_seconds()*1000),row.source)
+        return row
     if identifier not in _tasks:
         async def run():
             async with _slots:
-                return await asyncio.to_thread(_load,identifier)
+                loaded=await asyncio.to_thread(_load,identifier)
+                if not loaded or loaded.removed_at is not None:
+                    return loaded
+                def reconcile():
+                    reconcile_started=perf_counter()
+                    with _merge_lock:
+                        repo.reconcile_listing_duplicates(identifier)
+                    performance.elapsed("detail_reconcile",reconcile_started,loaded.source)
+                    return repo.get_listing_by_id(identifier)
+                return await asyncio.to_thread(reconcile)
         task=asyncio.create_task(run())
         _tasks[identifier]=task
-        task.add_done_callback(lambda finished:_tasks.pop(identifier,None))
-    row=await asyncio.shield(_tasks[identifier])
-    def reconcile():
-        with _merge_lock:
-            repo.reconcile_duplicate_listings()
-        return repo.get_listing_by_id(identifier)
-    return await asyncio.to_thread(reconcile)
+        def finished(done):
+            if _tasks.get(identifier) is done:
+                _tasks.pop(identifier,None)
+            # A web request can finish before the shared task. Always consume
+            # its exception even when there are no remaining readers.
+            if not done.cancelled() and done.exception() is not None:
+                log.warning("Detail enrichment failed for listing %s",identifier)
+        task.add_done_callback(finished)
+    # A timeout or closing a drawer only detaches that reader. Collection and
+    # reconciliation belong to the shared task and finish exactly once.
+    return await asyncio.shield(_tasks[identifier])
 
 
 async def resolve_new_listing(row):

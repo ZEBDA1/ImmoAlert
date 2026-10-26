@@ -167,6 +167,7 @@ class Settings:
         default_factory=lambda: env_seconds("SCHEDULER_SOURCE_BACKOFF_MAX_SECONDS", 600, min_value=1)
     )
     source_run_retention_days: int = field(default_factory=lambda: env_int("SOURCE_RUN_RETENTION_DAYS", 14, min_value=1))
+    scheduler_interval_seconds: int = field(default_factory=lambda: env_seconds("SCHEDULER_INTERVAL_SECONDS", 1800, min_value=60))
 
     full_scan_mode: bool = field(default_factory=lambda: env_bool("FULL_SCAN", False))
     expand_location_variants: bool = field(default_factory=lambda: env_bool("EXPAND_LOCATION_VARIANTS", True))
@@ -208,11 +209,14 @@ class Settings:
     flashproxy_enabled: bool = field(default_factory=lambda: env_bool("FLASHPROXY_ENABLED", False))
     flashproxy_api_key: str | None = field(default_factory=lambda: env_optional_str("FLASHPROXY_API_KEY"), repr=False)
     flashproxy_plan_id: str | None = field(default_factory=lambda: env_optional_str("FLASHPROXY_PLAN_ID"))
+    flashproxy_plan_ids: tuple[str, ...] = field(default_factory=lambda: env_secret_list("FLASHPROXY_PLAN_IDS"))
     flashproxy_country: str = field(default_factory=lambda: env_str("FLASHPROXY_COUNTRY", "FR"))
     flashproxy_sticky_minutes: int = field(default_factory=lambda: env_int("FLASHPROXY_STICKY_MINUTES", 10, min_value=1, max_value=120))
     flashproxy_timeout_seconds: int = field(default_factory=lambda: env_seconds("FLASHPROXY_TIMEOUT_SECONDS", 12, min_value=3, max_value=30))
 
     web_site_url: str | None = field(default_factory=lambda: env_optional_str("WEB_SITE_URL"))
+    favorite_freshness_target_hours: int = field(default_factory=lambda: env_int("FAVORITE_FRESHNESS_TARGET_HOURS", 6, min_value=6, max_value=48))
+    favorite_freshness_max_batch: int = field(default_factory=lambda: env_int("FAVORITE_FRESHNESS_MAX_BATCH", 12, min_value=1, max_value=24))
     web_enabled: bool = field(default_factory=lambda: env_bool("WEB_ENABLED", False))
     web_bind_host: str = field(default_factory=lambda: env_str("WEB_BIND_HOST", "0.0.0.0"))
     web_port: int = field(default_factory=lambda: env_int("WEB_PORT", 8088, min_value=1, max_value=65535))

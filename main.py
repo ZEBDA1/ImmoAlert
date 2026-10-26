@@ -18,6 +18,10 @@ from services.scheduler import run_scheduler
 from services.web_api import start_web_server
 from services.site_sync import _scan_tasks
 from services.listing_details import reconcile_inventory_details
+from services.provider_monitor import monitor_quotas
+from services.search_jobs import shutdown_search_jobs
+from services.member_notifications import run_member_monitor
+from services.favorite_freshness import run_freshness_monitor
 
 
 def _configure_utf8_runtime() -> None:
@@ -61,15 +65,30 @@ async def main():
     scheduler_task = asyncio.create_task(run_scheduler(bot), name="scheduler")
     web_runner = await start_web_server(bot)
     details_task=asyncio.create_task(reconcile_inventory_details(),name="property-verification")
+    member_task=asyncio.create_task(run_member_monitor(bot),name="member-notifications")
+    freshness_task=asyncio.create_task(run_freshness_monitor(),name="favorite-freshness")
+    quota_task=asyncio.create_task(monitor_quotas(),name="provider-quota-monitor") if settings.web_enabled else None
 
     log.info("Bot is starting...")
     try:
         await dp.start_polling(bot)
     finally:
+        for task in (member_task,freshness_task):task.cancel()
+        await asyncio.gather(member_task,freshness_task,return_exceptions=True)
         if web_runner:
             await web_runner.cleanup()
-        for task in _scan_tasks.values():
+        scans=list(_scan_tasks.values())
+        for task in scans:
             task.cancel()
+        if scans:
+            await asyncio.gather(*scans,return_exceptions=True)
+        await shutdown_search_jobs()
+        if quota_task:
+            quota_task.cancel()
+            try:
+                await quota_task
+            except asyncio.CancelledError:
+                pass
         scheduler_task.cancel()
         details_task.cancel()
         try:

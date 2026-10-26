@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import re
 import unicodedata
+import requests
+from urllib.parse import urlsplit
 
 from utils.cache import TTLCache
 from utils.http import http_client
 from utils.scrapling import scrapling_enabled, fetch_json_with_scrapling
-from config import settings
+from utils.flashproxy import provider_enabled
+from utils.fetch_diagnostics import note_event, note_problem
 
 _CACHE = TTLCache(86400)
 
@@ -41,9 +44,26 @@ def city_slug(value: str) -> str:
 
 
 def public_json(url: str, params: dict):
+    # Official commune metadata is independent of the portal proxy. Routing this
+    # public API through residential exits can fail and silently turn a local
+    # portal search into a national search. Only this exact host is exempt.
+    if urlsplit(url).hostname=="geo.api.gouv.fr":
+        try:
+            session=requests.Session();session.trust_env=False
+            with session:
+                response=session.get(url,params=params,timeout=(3,7),allow_redirects=False)
+                note_event("http_ok" if response.status_code==200 else "http_error",url,engine="official_geo_direct",stage="localisation",status=response.status_code)
+                if response.status_code==200:
+                    return response.json()
+                note_problem("geolocation_unavailable",url,stage="localisation",engine="official_geo_direct",status=response.status_code,
+                    message=f"L’API officielle des communes répond HTTP {response.status_code}. Réessayer ultérieurement.")
+        except (requests.RequestException,ValueError) as exc:
+            note_problem("geolocation_unavailable",url,stage="localisation",engine="official_geo_direct",exception=exc,
+                message="L’API officielle des communes est injoignable ou sa réponse JSON est invalide.")
+        return None
     if scrapling_enabled():
         return fetch_json_with_scrapling(url, params)
-    if settings.flashproxy_enabled:
+    if provider_enabled("flashproxy"):
         return None
     try:
         response = http_client.get(url, params=params, timeout=10, retries=1, allow_statuses={403,404,429})
@@ -65,12 +85,21 @@ def resolve_commune(city: str | None, postal: str | None) -> dict | None:
         params["nom"] = city
         params["limit"] = "5"
     rows = public_json("https://geo.api.gouv.fr/communes", params)
-    if not isinstance(rows, list):
+    if rows is None:
         return None
-    candidates = [row for row in rows if isinstance(row, dict) and row.get("code") and row.get("nom")]
+    if not isinstance(rows, list):
+        note_problem("geolocation_unavailable", "https://geo.api.gouv.fr/communes",stage="localisation",
+            message="Réponse inattendue de l’API des communes : une liste JSON est attendue.")
+        return None
+    candidates = [row for row in rows if isinstance(row, dict) and isinstance(row.get("code"),str) and isinstance(row.get("nom"),str) and row["code"] and row["nom"]]
     if city:
         candidates = [row for row in candidates if normalized_name(row["nom"]) == normalized_name(city)]
     if not candidates:
+        if postal:
+            message=f"Aucune commune correspondant à {city or 'la recherche'} pour le code postal {postal}. Vérifier le code postal et la ville ; le code INSEE n’est pas un code postal."
+        else:
+            message=f"Aucune commune correspondant exactement à {city}. Vérifier le nom de la ville."
+        note_problem("commune_not_resolved", "https://geo.api.gouv.fr/communes",stage="localisation",message=message)
         return None
     result = max(candidates, key=lambda row: row.get("population") or 0)
     _CACHE.set(key, result)

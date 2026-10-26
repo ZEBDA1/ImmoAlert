@@ -3,5 +3,6 @@
 return [
     'backend_url' => 'https://backend.example.com',
     'public_origin' => 'https://immo.example.com',
-    'shared_secret' => 'REMPLACER_PAR_UN_SECRET_ALEATOIRE_DE_64_CARACTERES',
+    // Set the same random secret as WEB_PROXY_SECRET (at least 32 characters).
+    'shared_secret' => '',
 ];

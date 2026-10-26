@@ -192,6 +192,9 @@ class SeLogerScraper(BaseScraper):
             html = fetch_html(url, referer="https://www.seloger.com/")
             if not html:
                 continue
+            from scraper.aviv import search_rows
+            if native := search_rows(html,self.source):
+                return native
             soup = BeautifulSoup(html, "html.parser")
             cards = soup.select(".c-pa-list .c-pa-list_item a") or soup.select(
                 "a[href*='/annonce/'], a[href*='/annonces/']"

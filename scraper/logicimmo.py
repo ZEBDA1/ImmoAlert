@@ -95,12 +95,20 @@ class LogicImmoScraper(BaseScraper):
         )
 
     def fetch_city(self, city: Optional[str], postal_code: Optional[str]) -> Iterable[ScrapedListing]:
-        # Fetch listing pages, then hydrate a subset of details for accuracy
+        from scraper.aviv import search_rows
+        from utils.fetch_diagnostics import note_problem
         for url in self._search_urls(city, postal_code):
             html = fetch_html(url, referer="https://www.logic-immo.com/")
             if not html:
                 continue
-            for href in self._extract_cards(html)[:20]:
-                l = self._parse_detail(href)
-                if l:
-                    yield l
+            rows=search_rows(html,self.source)
+            if rows:
+                yield from rows
+                return
+            links=self._extract_cards(html)[:20]
+            if not links:
+                note_problem("parser_no_cards",url)
+            for href in links:
+                listing = self._parse_detail(href)
+                if listing:
+                    yield listing

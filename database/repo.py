@@ -241,7 +241,8 @@ def save_listing(
     last_seen_at: Optional[datetime] = None,
     inventory_status: Optional[str] = None,
 ) -> ListingSaveResult:
-    from services.deduplication import same_property
+    from services.deduplication import same_property,normalized
+    from services.property_tracking import record_observation
     incoming = m.Listing(source=source, external_id=external_id, url=url, title=title,
         price=price, surface_m2=surface_m2, rooms=rooms, location=location,
         description=description, images=images)
@@ -250,6 +251,9 @@ def save_listing(
             m.ListingPublication.source == source, m.ListingPublication.external_id == external_id))
         if publication:
             existing = s.get(m.Listing, publication.listing_id)
+            if last_seen_at and publication.last_seen_at and last_seen_at<publication.last_seen_at:
+                return ListingSaveResult(existing,False,"source_external_id",existing.id)
+            record_observation(s,existing,source,external_id,price,last_seen_at,inventory_status)
             _refresh_listing(existing, incoming, last_seen_at, inventory_status)
             publication.url = url
             if last_seen_at:
@@ -262,9 +266,12 @@ def save_listing(
         if existing:
             if existing.duplicate_of_id:
                 existing = s.get(m.Listing, existing.duplicate_of_id)
+            if existing.source==source and existing.external_id==external_id and last_seen_at and existing.last_seen_at and last_seen_at<existing.last_seen_at:
+                return ListingSaveResult(existing,False,"source_external_id",existing.id)
+            record_observation(s,existing,source,external_id,price,last_seen_at,inventory_status)
             _record_publication(s, existing, source, external_id, url, last_seen_at)
             _refresh_listing(existing, incoming, last_seen_at, inventory_status)
-            if inventory_status == "active" and last_seen_at is not None:
+            if inventory_status == "active" and last_seen_at is not None and existing.removed_at is None:
                 # An observed rental may change its price, photos or details.
                 # Refresh the same row, preserving favorites and sent-alert IDs.
                 for key, value in {
@@ -292,12 +299,13 @@ def save_listing(
                 .where(
                     m.Listing.canonical_signature == canonical_signature,
                     m.Listing.duplicate_of_id.is_(None),
-                    m.Listing.first_seen_at >= since,
+                    (m.Listing.first_seen_at >= since) | (m.Listing.removed_at.is_not(None)),
                 )
                 .order_by(m.Listing.first_seen_at.desc())
                 .limit(1)
             ).scalar_one_or_none()
             if duplicate:
+                record_observation(s,duplicate,source,external_id,price,last_seen_at,inventory_status)
                 _record_publication(s, duplicate, source, external_id, url, last_seen_at)
                 _refresh_listing(duplicate, incoming, last_seen_at, inventory_status)
                 s.flush()
@@ -314,10 +322,11 @@ def save_listing(
                 m.Listing.duplicate_of_id.is_(None), m.Listing.source != source,
                 m.Listing.price.between(price-max(30, price*.06), price+max(30,price*.06)),
                 m.Listing.surface_m2.between(surface_m2-max(.7,surface_m2*.025),surface_m2+max(.7,surface_m2*.025)),
-                (m.Listing.last_seen_at >= since) | (m.Listing.first_seen_at >= since),
+                (m.Listing.last_seen_at >= since) | (m.Listing.first_seen_at >= since) | (m.Listing.removed_at.is_not(None)),
             ).order_by(m.Listing.id))
             for duplicate in candidates:
                 if same_property(incoming, duplicate):
+                    record_observation(s,duplicate,source,external_id,price,last_seen_at,inventory_status)
                     _record_publication(s, duplicate, source, external_id, url, last_seen_at)
                     _refresh_listing(duplicate, incoming, last_seen_at, inventory_status)
                     s.flush()
@@ -328,6 +337,7 @@ def save_listing(
             external_id=external_id,
             url=url,
             title=title,
+            search_text=normalized((title or '')+' '+(location or '')),
             price=price,
             surface_m2=surface_m2,
             price_per_m2=price_per_m2,
@@ -347,6 +357,7 @@ def save_listing(
         s.add(listing)
         s.flush()
         _record_publication(s, listing, source, external_id, url, last_seen_at)
+        record_observation(s,listing,source,external_id,price,last_seen_at,inventory_status)
         return ListingSaveResult(listing=listing, is_new=True)
 
 
@@ -365,6 +376,8 @@ def _record_publication(session, listing, source, external_id, url, seen):
 
 
 def _refresh_listing(existing, incoming, seen, status):
+    if existing.removed_at is not None:
+        return
     if existing.source==incoming.source and existing.external_id==incoming.external_id and status=="active" and seen:
         for key in ("url","title","price","surface_m2","rooms","location"):
             if getattr(incoming,key) is not None:
@@ -390,6 +403,8 @@ def _refresh_listing(existing, incoming, seen, status):
         existing.latitude,existing.longitude,existing.geo_precision=incoming.latitude,incoming.longitude,incoming.geo_precision
     if incoming.details_checked_at and (not existing.details_checked_at or incoming.details_checked_at>existing.details_checked_at):
         existing.details_checked_at,existing.details_status=incoming.details_checked_at,incoming.details_status
+    from services.deduplication import normalized
+    existing.search_text=normalized((existing.title or '')+' '+(existing.location or ''))
 
 
 def possible_duplicate_listings(listing, *, limit=2) -> list[m.Listing]:
@@ -417,16 +432,28 @@ def listing_publications(listing_id: int) -> list[dict]:
         if not row:
             return []
         rows = list(s.scalars(select(m.ListingPublication).where(m.ListingPublication.listing_id==listing_id).order_by(m.ListingPublication.id)))
-        return [{"source":p.source,"url":p.url} for p in rows] or [{"source":row.source,"url":row.url}]
+        return [{"source":p.source,"url":p.url,"price":p.price} for p in rows] or [{"source":row.source,"url":row.url,"price":row.price}]
 
 
-def reconcile_duplicate_listings() -> int:
+def reconcile_duplicate_listings(*, identifier=None) -> int:
     """Merge confident existing matches, preserving records and user relations."""
     from services.deduplication import same_property
     from scraper.quality import extract_postal_code
     merged = 0
     with _listing_lock, session_scope() as s:
-        rows = list(s.scalars(select(m.Listing).where(current_inventory_condition()).order_by(m.Listing.id)))
+        query=select(m.Listing).where(current_inventory_condition())
+        if identifier is not None:
+            seed=s.get(m.Listing,identifier)
+            if not seed:return 0
+            if seed.duplicate_of_id:seed=s.get(m.Listing,seed.duplicate_of_id)
+            if not seed or not seed.price or not seed.surface_m2:return 0
+            query=query.where((m.Listing.id==seed.id)|(m.Listing.source!=seed.source),m.Listing.price.between(seed.price-max(35,seed.price*.06),seed.price+max(35,seed.price*.06)),m.Listing.surface_m2.between(seed.surface_m2-max(1,seed.surface_m2*.03),seed.surface_m2+max(1,seed.surface_m2*.03)))
+            postal=seed.normalized_postal_code or extract_postal_code(seed.location)
+            if postal:query=query.where((m.Listing.normalized_postal_code==postal)|(m.Listing.normalized_postal_code.is_(None))|(m.Listing.normalized_postal_code==""))
+            from services.deduplication import same_location
+            rows=[row for row in s.scalars(query.order_by(m.Listing.id)) if row.id==seed.id or same_location(seed,row)]
+        else:
+            rows=list(s.scalars(query.order_by(m.Listing.id)))
         buckets = {}
         for row in rows:
             key = (row.normalized_postal_code or extract_postal_code(row.location) or "", round((row.surface_m2 or 0)/5))
@@ -439,11 +466,30 @@ def reconcile_duplicate_listings() -> int:
             _record_publication(s,target,row.source,row.external_id,row.url,row.last_seen_at)
             for pub in s.scalars(select(m.ListingPublication).where(m.ListingPublication.listing_id==row.id)):
                 pub.listing_id=target.id
+            for history in s.scalars(select(m.ListingPriceHistory).where(m.ListingPriceHistory.listing_id==row.id)):
+                history.listing_id=target.id
+            for notice in s.scalars(select(m.MemberNotification).where(m.MemberNotification.listing_id==row.id)):
+                notice.listing_id=target.id
+            for note in list(s.scalars(select(m.MemberListingNote).where(m.MemberListingNote.listing_id==row.id))):
+                other=s.get(m.MemberListingNote,(note.user_id,target.id))
+                if other:
+                    from services.property_tracking import merge_note_rows
+                    merge_note_rows(other,note)
+                    s.delete(note)
+                else:note.listing_id=target.id
             _refresh_listing(target,row,row.last_seen_at,row.inventory_status)
-            for model in (m.Favorite,m.SentAlert,m.PendingAlert):
+            target.first_seen_at = min(target.first_seen_at,row.first_seen_at)
+            for model in (m.Favorite,m.SentAlert,m.PendingAlert,m.ListingRead,m.ListingReport):
                 for rel in s.scalars(select(model).where(model.listing_id==row.id)):
                     other=s.scalar(select(model).where(model.listing_id==target.id,model.user_id==rel.user_id))
                     if other:
+                        if model is m.ListingReport:
+                            if rel.status=="open":
+                                other.status="open";other.reviewed_at=None;other.reviewed_by=None
+                            other.note="\n".join(v for v in [other.note,rel.note] if v)[:500]
+                            other.created_at=min(other.created_at,rel.created_at)
+                        if model is m.ListingRead:
+                            other.read_at=min(other.read_at,rel.read_at)
                         if model is m.PendingAlert and rel.status=="sent":
                             other.status="sent"
                         elif model is m.PendingAlert and rel.status=="pending" and other.status!="sent":
@@ -454,9 +500,15 @@ def reconcile_duplicate_listings() -> int:
                         rel.listing_id=target.id
                     s.flush()
             row.duplicate_of_id=target.id
+            s.execute(update(m.Listing).where(m.Listing.duplicate_of_id==row.id,m.Listing.id!=row.id).values(duplicate_of_id=target.id))
             s.flush()
             merged+=1
     return merged
+
+
+def reconcile_listing_duplicates(identifier: int) -> int:
+    """Compare only the enriched property and its geographic/price shortlist."""
+    return reconcile_duplicate_listings(identifier=identifier)
 
 
 def has_sent_alert(user_id: int, listing_id: int) -> bool:
@@ -521,6 +573,9 @@ def add_pending_alert(
     match_reasons: str | None = None,
 ) -> bool:
     with session_scope() as s:
+        listing=s.get(m.Listing,listing_id)
+        if listing is not None and listing.removed_at is not None:
+            return False
         sent = s.execute(
             select(m.SentAlert.id).where(
                 m.SentAlert.user_id == user_id,
@@ -585,16 +640,20 @@ def get_all_active_filters() -> list[m.Filter]:
 def get_listing_by_id(listing_id: int) -> m.Listing | None:
     with session_scope() as s:
         row = s.get(m.Listing,listing_id)
-        return s.get(m.Listing,row.duplicate_of_id) if row and row.duplicate_of_id else row
+        visited=set()
+        while row and row.duplicate_of_id:
+            if row.id in visited:return None
+            visited.add(row.id);row=s.get(m.Listing,row.duplicate_of_id)
+        return row
 
 
 def current_inventory_condition(now: datetime | None = None):
     """Only coherent rentals actually observed on a portal in the last month."""
-    return (m.Listing.duplicate_of_id.is_(None)) & (m.Listing.inventory_status == "active") & (m.Listing.last_seen_at >= (now or datetime.utcnow()) - timedelta(days=30))
+    return (m.Listing.duplicate_of_id.is_(None)) & (m.Listing.removed_at.is_(None)) & (m.Listing.inventory_status == "active") & (m.Listing.last_seen_at >= (now or datetime.utcnow()) - timedelta(days=30))
 
 
 def is_current_listing(listing: m.Listing) -> bool:
-    return listing.inventory_status == "active" and listing.last_seen_at is not None and listing.last_seen_at >= datetime.utcnow() - timedelta(days=30)
+    return listing.removed_at is None and listing.inventory_status == "active" and listing.last_seen_at is not None and listing.last_seen_at >= datetime.utcnow() - timedelta(days=30)
 
 
 def get_recent_listings(*, hours: int = 48, limit: int = 300) -> list[m.Listing]:
@@ -612,7 +671,7 @@ def get_recent_listings(*, hours: int = 48, limit: int = 300) -> list[m.Listing]
 # Favorites
 def add_favorite(user_id: int, listing_id: int) -> bool:
     listing=get_listing_by_id(listing_id)
-    if not listing:
+    if not listing or listing.removed_at is not None:
         return False
     listing_id=listing.id
     with session_scope() as s:
@@ -661,11 +720,35 @@ def get_user_favorite_listings(user_id: int, *, limit: int = 50, sort: str = "re
         rows = s.execute(
             select(m.Listing)
             .join(m.Favorite, m.Favorite.listing_id == m.Listing.id)
-            .where(m.Favorite.user_id == user_id)
+            .where(m.Favorite.user_id == user_id,m.Listing.removed_at.is_(None))
             .order_by(*order)
             .limit(limit)
         ).scalars()
         return list(rows)
+
+
+def mark_listing_read(user_id: int, listing_id: int) -> int:
+    """Idempotent per-profile read state, shared by aliases and devices."""
+    with _listing_lock, session_scope() as session:
+        row=session.get(m.Listing,listing_id)
+        if not row or row.inventory_status=="invalid" or row.removed_at is not None:
+            raise ValueError("Annonce introuvable.")
+        visited=set()
+        while row.duplicate_of_id:
+            if row.id in visited:
+                raise ValueError("Annonce introuvable.")
+            visited.add(row.id)
+            row=session.get(m.Listing,row.duplicate_of_id)
+            if row is None:
+                raise ValueError("Annonce introuvable.")
+        if session.get(m.ListingRead,(user_id,row.id)) is None:
+            session.add(m.ListingRead(user_id=user_id,listing_id=row.id))
+        return row.id
+
+
+def read_listing_ids(user_id: int) -> list[int]:
+    with session_scope() as session:
+        return list(session.scalars(select(m.ListingRead.listing_id).where(m.ListingRead.user_id==user_id)))
 
 
 def save_source_run(
@@ -686,6 +769,7 @@ def save_source_run(
     error_count: int = 0,
     disabled_until: datetime | None = None,
     last_error: str | None = None,
+    diagnostics_json: str | None = None,
 ) -> m.SourceRun:
     with session_scope() as s:
         row = m.SourceRun(
@@ -705,6 +789,7 @@ def save_source_run(
             error_count=error_count,
             disabled_until=disabled_until,
             last_error=last_error,
+            diagnostics_json=diagnostics_json,
         )
         s.add(row)
         s.flush()

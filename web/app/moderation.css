@@ -1,0 +1,58 @@
+/* Native popup surfaces must use the same readable palette as the closed field. */
+:root,[data-theme="dark"]{color-scheme:dark}
+[data-theme="light"]{color-scheme:light}
+select{color-scheme:inherit}
+select option,select optgroup{background-color:var(--surface);color:var(--text)}
+select option:disabled{color:var(--muted)}
+textarea:focus-visible{outline:2px solid var(--primary);outline-offset:3px}
+.detail-report>p{font-size:14px;color:var(--muted);line-height:1.8}
+.detail-report .report-success{display:flex;align-items:flex-start;gap:9px;margin-top:16px;color:var(--good)}
+.report-success>svg{flex-shrink:0;margin-top:4px}
+.detail-report>.text-button{margin-top:8px}
+.moderation-form{display:grid;gap:12px;margin-top:18px}
+.moderation-form>label{display:grid;gap:9px;font-size:14px;line-height:1.6}
+.moderation-form textarea{font:inherit;font-size:16px;line-height:1.7;resize:vertical;min-height:120px;width:100%;border:1px solid var(--border);border-radius:10px;background:var(--surface-subtle);color:var(--text);padding:12px 14px}
+.moderation-form textarea::placeholder{color:var(--muted);opacity:1}
+.moderation-form .modal-actions{margin-top:4px;flex-wrap:wrap}
+.moderation-error{font-size:14px;line-height:1.7;color:var(--danger)}
+.detail-admin-removal{margin-top:20px;padding-top:14px;border-top:1px solid var(--border)}
+.moderation-remove{color:var(--danger)}
+.moderation-confirm{position:fixed;margin:auto;inset:0;width:min(520px,calc(100% - 32px));max-height:calc(100dvh - 32px);overflow-y:auto;padding:28px;border:0;border-radius:18px;background:var(--surface);color:var(--text);box-shadow:0 20px 70px var(--shadow)}
+.moderation-confirm::backdrop{background:var(--overlay)}
+.moderation-confirm h2{font-size:24px;font-weight:600;line-height:1.25;letter-spacing:-.6px;margin:18px 0}
+.moderation-confirm p{font-size:16px;line-height:1.75;color:var(--muted);margin:12px 0;overflow-wrap:anywhere}
+.moderation-confirm .moderation-property-title{color:var(--text);font-weight:500}
+.moderation-symbol{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;background:var(--danger-soft);color:var(--danger);border-radius:12px}
+.moderation-confirm .modal-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:24px}
+.moderation-confirm .danger-button{background:var(--danger-soft);color:var(--danger);border-color:var(--danger);white-space:normal}
+.reports-heading{display:flex;align-items:center;justify-content:space-between;gap:20px}
+.reports-heading h2{font-size:24px;font-weight:600;line-height:1.4;letter-spacing:-.4px}
+.reports-heading p,.reports-help{font-size:14px;color:var(--muted);line-height:1.8;margin-top:9px}
+.reports-help{max-width:65ch;margin:18px 0}
+.reports-filter{display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:14px;color:var(--muted);padding:8px 0 22px}
+.reports-filter select{min-width:170px;font-size:16px}
+.reports-empty{padding:44px 0;text-align:center;color:var(--muted)}
+.reports-empty h3{font-size:20px;line-height:1.5;margin:14px 0 10px;color:var(--text)}
+.reports-empty p{font-size:14px;line-height:1.8}
+.report-item{padding:28px 0;border-top:1px solid var(--border);min-width:0}
+.report-item-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;flex-wrap:wrap}
+.report-item h3{font-size:20px;font-weight:600;line-height:1.5;margin:12px 0 8px;overflow-wrap:anywhere}
+.report-item-heading p{font-size:14px;line-height:1.7;color:var(--muted)}
+.report-messages{list-style:none;padding:0;margin:22px 0;display:grid;gap:18px}
+.report-messages>li{border-top:1px solid var(--border);padding-top:14px;min-width:0}
+.report-messages>li>div{display:flex;gap:10px 18px;align-items:center;flex-wrap:wrap;font-size:12px;line-height:1.8;color:var(--muted)}
+.report-messages strong{color:var(--text);font-size:14px;overflow-wrap:anywhere}
+.report-messages p{font-size:16px;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere;margin-top:9px}
+.report-messages small{display:block;font-size:12px;color:var(--muted);margin-top:8px;line-height:1.8}
+.report-item-actions{display:flex;gap:12px;flex-wrap:wrap}
+.report-item-actions .button{white-space:normal}
+@media(max-width:650px){
+ .moderation-confirm{padding:24px 20px;max-height:calc(100dvh - 24px);width:calc(100% - 24px)}
+ .moderation-confirm h2{font-size:24px}
+ .moderation-confirm .modal-actions{flex-direction:column-reverse}
+ .moderation-confirm .modal-actions .button,.moderation-form .modal-actions .button{min-height:48px;width:100%}
+ .reports-heading h2{font-size:24px}
+ .report-item-heading{gap:12px}
+ .report-item-actions{flex-direction:column}
+ .report-item-actions .button{min-height:48px}
+}

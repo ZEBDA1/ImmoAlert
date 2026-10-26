@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import logging
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from threading import BoundedSemaphore
 from contextlib import contextmanager
 
 from utils.flashproxy import get_proxy_route, FlashProxyUnavailable, flashproxy_status
-from utils.fetch_diagnostics import note_problem
+from utils.fetch_diagnostics import note_problem, note_event
 
 from config import settings
 from database import repo
@@ -100,18 +101,22 @@ def fetch_with_scrapling(url: str, *, referer: str | None = None, headers: dict 
     # other sources that only need this inexpensive HTTP transport.
     try:
         from scrapling.fetchers import Fetcher
-
+        started=time.monotonic()
         response = Fetcher.get(url, impersonate="chrome", timeout=settings.scrapling_timeout_seconds,
             retries=1, proxy=route.url if route else None,
             headers={**({"Referer": referer} if referer else {}), **(headers or {})})
-        if response.status == 200 and response.html_content and not is_probably_blocked(response.html_content):
+        blocked=is_probably_blocked(response.html_content or "") if response.html_content else False
+        note_event("http_blocked" if blocked or response.status in {403,429} else "http_ok" if response.status==200 else "http_error",url,engine="scrapling_http",status=response.status,elapsed=time.monotonic()-started)
+        if response.status == 200 and response.html_content and not blocked:
             return response.html_content
         if response.status == 404:
             return None
     except Exception as exc:
+        note_event("transport_exception",url,engine="scrapling_http",exception=exc)
         log.info("Scrapling HTTP primary failed (%s)", type(exc).__name__)
     # Limit browser pressure when several sources fail at once.
     if not _BROWSERS.acquire(timeout=2):
+        note_event("browser_busy",url,engine="chromium",message="Aucune place disponible pour le navigateur.")
         log.info("Scrapling primary busy")
         return None
     try:
@@ -136,10 +141,13 @@ def fetch_with_scrapling(url: str, *, referer: str | None = None, headers: dict 
             proxy=route.browser if route else None,
         )
         html = response.html_content
-        if response.status != 200 or not html or is_probably_blocked(html):
+        blocked=is_probably_blocked(html or "") if html else False
+        note_event("http_blocked" if blocked or response.status in {403,429} else "http_ok" if response.status==200 else "http_error",url,engine="chromium",status=response.status)
+        if response.status != 200 or not html or blocked:
             return None
         return html
     except Exception as exc:
+        note_event("transport_exception",url,engine="chromium",exception=exc)
         # Do not log exception messages which can include proxy credentials.
         log.warning("Scrapling primary failed (%s)", type(exc).__name__)
         return None
@@ -156,6 +164,8 @@ def fetch_json_with_scrapling(url: str, params: dict):
         route = get_proxy_route()
         response = Fetcher.get(url, params=params, impersonate="chrome", timeout=12, retries=1,
                                proxy=route.url if route else None)
+        note_event("http_ok" if response.status==200 else "http_error",url,engine="scrapling_json",status=response.status)
         return response.json() if response.status == 200 else None
-    except Exception:
+    except Exception as exc:
+        note_event("json_transport_exception",url,engine="scrapling_json",exception=exc)
         return None

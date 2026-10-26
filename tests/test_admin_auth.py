@@ -124,6 +124,7 @@ class AdminAccessTests(unittest.IsolatedAsyncioTestCase):
         await self.login();result=await self.create(premium=True);await self.password_login(result["credentials"])
         local=result["account"]["user_id"]
         repo.add_favorite(local,self.item.id)
+        repo.mark_listing_read(local,self.item.id)
         repo.create_or_update_filter(local,city="Rouen",postal_code="76000")
         telegram=repo.get_or_create_user(876,"linked_user")
         repo.create_or_update_filter(telegram.id,city="Paris",postal_code="75001")
@@ -133,6 +134,7 @@ class AdminAccessTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(state["account"]["is_premium"])
         self.assertEqual(len(state["account"]["filters"]),2)
         self.assertEqual(state["account"]["favorites"][0]["id"],self.item.id)
+        self.assertIn(self.item.id,state["account"]["read_listing_ids"])
         self.assertEqual((await self.password_login(result["credentials"])).status,200)
 
     async def test_link_to_another_provisioned_account_is_refused(self):

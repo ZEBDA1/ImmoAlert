@@ -26,6 +26,35 @@ class RuntimeSetting(Base):
     value: Mapped[str] = mapped_column(Text)
 
 
+class ProviderConfiguration(Base):
+    """A durable override marker: an empty managed pool stays empty."""
+    __tablename__ = "provider_configurations"
+    provider: Mapped[str] = mapped_column(String(24), primary_key=True)
+    enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    keyless_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ProviderCredential(Base):
+    __tablename__ = "provider_credentials"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(24), index=True)
+    label: Mapped[str] = mapped_column(String(60))
+    encrypted_key: Mapped[str] = mapped_column(Text)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    masked_key: Mapped[str] = mapped_column(String(16))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    origin: Mapped[str] = mapped_column(String(16), default="admin")
+    status: Mapped[str] = mapped_column(String(24), default="unchecked")
+    detail: Mapped[str] = mapped_column(String(200), default="Quota pas encore vérifié.")
+    quota_json: Mapped[str] = mapped_column(Text, default="{}")
+    checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("provider", "fingerprint", name="uq_provider_credential_fingerprint"),)
+
+
 class WebSession(Base):
     __tablename__ = "web_sessions"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)  # SHA-256, never the cookie
@@ -116,6 +145,7 @@ class Listing(Base):
     external_id: Mapped[str] = mapped_column(String(128))
     url: Mapped[str] = mapped_column(Text)
     title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    search_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     price: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     surface_m2: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     price_per_m2: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -139,10 +169,32 @@ class Listing(Base):
     latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     geo_precision: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    removed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    removed_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("source", "external_id", name="uq_source_external"),
     )
+
+
+class ListingReport(Base):
+    __tablename__ = "listing_reports"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
+    listing_id: Mapped[int] = mapped_column(Integer, ForeignKey("listings.id"), index=True)
+    note: Mapped[str] = mapped_column(String(500), default="")
+    status: Mapped[str] = mapped_column(String(16), default="open", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    reviewed_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    __table_args__ = (UniqueConstraint("user_id", "listing_id", name="uq_report_user_listing"),)
+
+
+class ListingRead(Base):
+    __tablename__ = "listing_reads"
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    listing_id: Mapped[int] = mapped_column(Integer, ForeignKey("listings.id", ondelete="CASCADE"), primary_key=True, index=True)
+    read_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class ListingPublication(Base):
@@ -154,7 +206,79 @@ class ListingPublication(Base):
     external_id: Mapped[str] = mapped_column(String(128))
     url: Mapped[str] = mapped_column(Text)
     last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    price: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    availability_status: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
+    availability_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    availability_detail: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    absence_count: Mapped[int] = mapped_column(Integer, default=0)
+    absence_first_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     __table_args__ = (UniqueConstraint("source", "external_id", name="uq_publication_source_external"),)
+
+
+class ListingPriceHistory(Base):
+    __tablename__ = "listing_price_history"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    listing_id: Mapped[int] = mapped_column(Integer, ForeignKey("listings.id"), index=True)
+    publication_id: Mapped[int] = mapped_column(Integer, ForeignKey("listing_publications.id"), index=True)
+    price: Mapped[int] = mapped_column(Integer)
+    previous_price: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    announced_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class MemberListingNote(Base):
+    __tablename__ = "member_listing_notes"
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), primary_key=True)
+    listing_id: Mapped[int] = mapped_column(Integer, ForeignKey("listings.id"), primary_key=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+    search_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    stage: Mapped[str] = mapped_column(String(24), default="to_contact")
+    visit_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    reminder_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    reminder_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    commute_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    commute_destination: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    commute_mode: Mapped[Optional[str]] = mapped_column(String(12), nullable=True)
+    parking: Mapped[Optional[str]] = mapped_column(String(12), nullable=True)
+    accessibility: Mapped[Optional[str]] = mapped_column(String(12), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class NotificationPreference(Base):
+    __tablename__ = "notification_preferences"
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), primary_key=True)
+    timezone: Mapped[str] = mapped_column(String(64), default="Europe/Paris")
+    quiet_start: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)
+    quiet_end: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)
+    daily_summary: Mapped[bool] = mapped_column(Boolean, default=False)
+    summary_time: Mapped[str] = mapped_column(String(5), default="08:00")
+    price_alerts: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_summary_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    retry_after: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class MemberNotification(Base):
+    __tablename__ = "member_notifications"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
+    listing_id: Mapped[int] = mapped_column(Integer, ForeignKey("listings.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(24))
+    event_key: Mapped[str] = mapped_column(String(100))
+    payload: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    not_before: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    telegram_status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    read_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    __table_args__ = (UniqueConstraint("user_id", "event_key", name="uq_member_notification_event"),)
+
+
+class PerformanceSample(Base):
+    __tablename__ = "performance_samples"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(32), index=True)
+    value_ms: Mapped[float] = mapped_column(Float)
+    source: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
 class SentAlert(Base):
@@ -224,3 +348,4 @@ class SourceRun(Base):
     error_count: Mapped[int] = mapped_column(Integer, default=0)
     disabled_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    diagnostics_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

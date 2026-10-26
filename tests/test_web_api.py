@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest.mock import AsyncMock, patch
 from urllib.parse import urlsplit, parse_qs
@@ -36,6 +37,10 @@ class SelfHostedWebTests(unittest.IsolatedAsyncioTestCase):
         patcher.start(); self.addCleanup(patcher.stop)
         patcher = patch.object(site_sync, "_scan_tasks", {})
         patcher.start(); self.addCleanup(patcher.stop)
+        # API contract tests must not start network collectors. The real job
+        # lifecycle is exercised separately in test_search_jobs.py.
+        patcher = patch("services.search_jobs.start_search",new=AsyncMock(return_value={"id":"test-search-job","status":"queued"}))
+        self.search_start = patcher.start(); self.addCleanup(patcher.stop)
         self.admin = repo.get_or_create_user(42,"admin")
         self.member = repo.get_or_create_user(99,"member")
         from services import web_auth
@@ -79,7 +84,7 @@ class SelfHostedWebTests(unittest.IsolatedAsyncioTestCase):
             row=session.get(m.Listing,self.item.id)
             row.description="Description complète. "*300
             row.images=json.dumps([f"https://cdn.test/{i}.jpg" for i in range(15)])
-            row.details=json.dumps({"DPE":"C","Étage":"2"})
+            row.details=json.dumps({"DPE":"C","Étage":"2","Date de publication":"2026-10-26T15:04:02Z","external_ad_id":"INTERNAL-NETTY-ID","activity_sector":2,"store_name":"Annonceur fictif"})
             row.latitude,row.longitude,row.geo_precision=49.44,1.1,"city"
         row=repo.get_listing_by_id(self.item.id)
         with patch("services.listing_details.get_listing_details",new=AsyncMock(return_value=row)):
@@ -88,7 +93,13 @@ class SelfHostedWebTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status,200)
         self.assertEqual(data["listing"]["description"],row.description)
         self.assertEqual(len(data["listing"]["images"]),15)
-        self.assertEqual(data["listing"]["features"]["DPE"],"C")
+        self.assertEqual(data["listing"]["features"]["Classe énergie (DPE)"],"C")
+        self.assertEqual(data["listing"]["features"]["Date de publication"],"26/10/2026 16:04:02")
+        self.assertEqual(data["listing"]["features"]["Annonceur"],"Annonceur fictif")
+        self.assertNotIn("external_ad_id",data["listing"]["features"])
+        self.assertNotIn("activity_sector",data["listing"]["features"])
+        self.assertIn("INTERNAL-NETTY-ID",repo.get_listing_by_id(self.item.id).details)
+
         self.assertEqual(data["listing"]["geo_precision"],"city")
         self.assertEqual((await self.client.get("/api/listings/999999")).status,404)
         self.assertEqual((await self.client.get("/api/listings/nope")).status,404)
@@ -107,6 +118,39 @@ class SelfHostedWebTests(unittest.IsolatedAsyncioTestCase):
         with repo.session_scope() as session:
             keys = list(session.scalars(select(m.WebSession.id)))
         self.assertNotIn(fresh_cookie, keys)
+
+    async def test_slow_detail_returns_stored_content_before_shared_worker_finishes(self):
+        from services import listing_details
+        await self.login(99)
+        entered,release=threading.Event(),threading.Event()
+        def collect(identifier):
+            entered.set()
+            if not release.wait(5):raise TimeoutError("Test worker was not released")
+            with repo.session_scope() as session:
+                row=session.get(m.Listing,identifier)
+                row.description="La description complémentaire est maintenant disponible."
+                row.details_status="complete";row.details_checked_at=datetime.utcnow()
+            return repo.get_listing_by_id(identifier)
+        with patch.object(listing_details,"_tasks",{}),patch.object(listing_details,"_slots",asyncio.Semaphore(2)),patch.object(listing_details,"_load",side_effect=collect) as load,patch.object(repo,"reconcile_duplicate_listings") as reconcile:
+            try:
+                response=await asyncio.wait_for(self.client.get(f"/api/listings/{self.item.id}"),.8)
+                data=await response.json()
+                self.assertEqual(response.status,200)
+                self.assertTrue(entered.is_set());self.assertFalse(release.is_set())
+                self.assertEqual(data["listing"]["title"],self.item.title)
+                self.assertTrue(data["enriching"])
+                self.assertGreaterEqual(data["retry_after_ms"],2000)
+                again=await (await self.client.get(f"/api/listings/{self.item.id}")).json()
+                self.assertTrue(again["enriching"]);load.assert_called_once()
+                release.set()
+                await asyncio.gather(*listing_details._tasks.values())
+                ready=await (await self.client.get(f"/api/listings/{self.item.id}")).json()
+                self.assertFalse(ready["enriching"])
+                self.assertIn("complémentaire",ready["listing"]["description"])
+                load.assert_called_once();reconcile.assert_called_once()
+            finally:
+                release.set()
+                await asyncio.gather(*listing_details._tasks.values(),return_exceptions=True)
 
     async def test_expired_pairing_cannot_log_in(self):
         response=await self.post("link"); data=await response.json()

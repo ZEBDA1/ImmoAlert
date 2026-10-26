@@ -19,7 +19,7 @@ def response(data=None, status=200, headers=None):
 class FlashProxyTests(unittest.TestCase):
     def setUp(self):
         for name, value in {"flashproxy_enabled": True, "flashproxy_api_key": "test-flash-secret",
-                            "flashproxy_plan_id": "plan-1", "flashproxy_country": "FR",
+                            "flashproxy_plan_id": "plan-1", "flashproxy_plan_ids": (), "flashproxy_country": "FR",
                             "flashproxy_sticky_minutes": 10}.items():
             p = patch.object(settings, name, value); p.start(); self.addCleanup(p.stop)
         self.client = fp.FlashProxyClient()
@@ -103,11 +103,47 @@ class FlashProxyTests(unittest.TestCase):
             self.assertIsNone(scrapling.fetch_with_scrapling("https://example.test"))
             fetch.assert_not_called()
 
+    def test_legacy_html_obeys_managed_proxy_switch_instead_of_environment(self):
+        html = "<html><body>Appartement en location à Rouen</body></html>"
+        for enabled in (True, False):
+            with self.subTest(managed_enabled=enabled), \
+                 patch.object(settings, "flashproxy_enabled", not enabled), \
+                 patch("services.provider_credentials.provider_enabled", return_value=enabled), \
+                 patch.object(http, "scrapling_enabled", return_value=False), \
+                 patch.object(fc, "firecrawl_available", return_value=False), \
+                 patch.object(http, "_HTML_CACHE", TTLCache(90)), \
+                 patch.object(http.http_client, "get", return_value=Mock(status_code=200, text=html)) as direct, \
+                 patch.object(http, "get_with_playwright") as browser:
+                result = http.fetch_html("https://example.test/managed-proxy")
+                if enabled:
+                    self.assertIsNone(result)
+                    direct.assert_not_called()
+                else:
+                    self.assertEqual(result, html)
+                    direct.assert_called_once()
+                browser.assert_not_called()
+
+    def test_legacy_location_lookup_obeys_managed_proxy_switch(self):
+        from utils import locations
+        rows = [{"nom": "Rouen", "code": "76540"}]
+        for enabled in (True, False):
+            with self.subTest(managed_enabled=enabled), \
+                 patch.object(settings, "flashproxy_enabled", not enabled), \
+                 patch("services.provider_credentials.provider_enabled", return_value=enabled), \
+                 patch.object(locations, "scrapling_enabled", return_value=False), \
+                 patch.object(http.http_client, "get", return_value=Mock(status_code=200, json=Mock(return_value=rows))) as direct:
+                result = locations.public_json("https://example.test/communes", {})
+                if enabled:
+                    self.assertIsNone(result)
+                    direct.assert_not_called()
+                else:
+                    self.assertEqual(result, rows)
+                    direct.assert_called_once()
+
     def test_expired_session_is_regenerated_and_changed_key_clears_cooldown(self):
         with patch.object(fp.requests, "request", return_value=response({"proxies": [PROXY]})) as request:
-            self.client.route()
-            self.client._expires = 0
-            self.client.route()
+            with patch.object(fp.time,"monotonic",return_value=100):self.client.route()
+            with patch.object(fp.time,"monotonic",return_value=1000):self.client.route()
             self.assertEqual(request.call_count, 2)
             self.client._retry_at = float("inf")
             with patch.object(settings, "flashproxy_api_key", "replacement-key"):

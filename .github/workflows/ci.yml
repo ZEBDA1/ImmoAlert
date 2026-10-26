@@ -11,6 +11,38 @@ permissions:
   contents: read
 
 jobs:
+  public-snapshot:
+    name: Public snapshot and secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify public files and scan secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          snapshot="$(mktemp -d)"
+          scanner="$(mktemp -d)"
+          trap 'rm -rf "$snapshot" "$scanner"' EXIT
+          git archive HEAD | tar -x -C "$snapshot"
+          python3 scripts/check_publication.py --root "$snapshot"
+          curl --fail --silent --show-error --location \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+            --output "$scanner/gitleaks.tar.gz"
+          python3 - "$scanner" <<'PY'
+          from pathlib import Path
+          import hashlib,sys,tarfile
+          root=Path(sys.argv[1]);archive=root/'gitleaks.tar.gz'
+          assert hashlib.sha256(archive.read_bytes()).hexdigest()=='551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb'
+          with tarfile.open(archive) as bundle:
+              member=bundle.getmember('gitleaks');assert member.isfile()
+              (root/'gitleaks').write_bytes(bundle.extractfile(member).read())
+          (root/'gitleaks').chmod(0o755)
+          PY
+          "$scanner/gitleaks" dir "$snapshot" --redact=100 --no-banner --no-color
+
   tests:
     name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest

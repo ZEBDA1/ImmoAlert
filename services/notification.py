@@ -182,7 +182,8 @@ def detail_pages(row) -> list[str]:
     lines.extend([" · ".join(specs),""])
     if row.charges_included is not None:
         lines.append("Charges comprises" if row.charges_included else "Charges non comprises")
-    for key,value in json.loads(row.details or "{}").items():
+    from services.listing_features import normalize_features
+    for key,value in normalize_features(row.details).items():
         lines.append(f"{key} : {value}")
     if row.geo_precision:
         lines.append("Localisation fournie par le portail (précision à confirmer)." if row.geo_precision=="portal" else "Localisation approximative au centre de la commune.")

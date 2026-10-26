@@ -8,11 +8,11 @@ Le site est servi par `services/web_api.py` dans le même processus que le bot. 
 
 Le site propose **Se connecter** par identifiant et mot de passe. Aucun formulaire ni endpoint d’inscription publique n’est disponible. Seul un administrateur peut créer un accès dans **Accès**, avec un mot de passe généré automatiquement et le choix du Premium. Les identifiants sont normalisés sans distinction de casse. Le mot de passe s’affiche une seule fois, est dérivé avec scrypt et un sel propre au compte, et n’entre pas dans les journaux ou l’historique des commandes.
 
-Telegram est facultatif. **Mon accès → Relier Telegram** demande une approbation explicite dans le bot et un nonce valable dix minutes. Les recherches et favoris du profil local sont regroupés avec ceux du profil Telegram, en préservant les anciennes données. Un compte Telegram déjà relié à un autre accès ne peut pas être récupéré. La connexion Telegram directe reste disponible pour les administrateurs configurés et les profils déjà invités ; démarrer le bot ne crée pas un accès au site.
+Telegram est facultatif. **Mon compte → Relier Telegram** demande une approbation explicite dans le bot et un nonce valable dix minutes. Les recherches et favoris du profil local sont regroupés avec ceux du profil Telegram, en préservant les anciennes données. Un compte Telegram déjà relié à un autre accès ne peut pas être récupéré. La connexion Telegram directe reste disponible pour les administrateurs configurés et les profils déjà invités ; démarrer le bot ne crée pas un accès au site.
 
 Les sessions expirent après trente jours. Leur identifiant aléatoire est renouvelé à la connexion et seule son empreinte SHA-256 est enregistrée. Les cookies sont HttpOnly, SameSite=Lax et Secure sur HTTPS. Réinitialiser un mot de passe ou désactiver un compte révoque ses sessions. Les droits sont relus pour chaque action : rôle du compte web ou appartenance à `ADMIN_TELEGRAM_IDS`. Un membre ne peut pas consulter les autres comptes ni les routes de supervision.
 
-**Console** affiche les huit sources, leur activité en cours, les zones traitées, les volumes bruts, normalisés, rejetés et uniques, les nouvelles annonces, les erreurs et délais dépassés, les dates de succès/échec et les temporisations. L’historique présente les 200 dernières collectes. Le trafic des appels API des utilisateurs est actualisé toutes les 1,5 secondes, avec les requêtes encore en cours, le compte, la méthode, la route, le code HTTP et la durée. Les actifs correspondent aux comptes ayant effectué une requête dans les cinq dernières minutes. Les sondes de supervision et de santé ne s’enregistrent pas elles-mêmes.
+**Sources & activité** affiche les huit sources, leur activité en cours, les zones traitées, les volumes bruts, normalisés, rejetés et uniques, les nouvelles annonces, les erreurs et délais dépassés, les dates de succès/échec et les temporisations. L’historique présente les 200 dernières collectes. Le trafic des appels API des utilisateurs est actualisé toutes les 2,5 secondes, avec les requêtes encore en cours, le compte, la méthode, la route, le code HTTP et la durée. Les actifs correspondent aux comptes ayant effectué une requête dans les cinq dernières minutes. Les sondes de supervision et de santé ne s’enregistrent pas elles-mêmes.
 
 L’historique de trafic conserve au maximum 20 000 requêtes sur trois jours. Il ne contient ni corps, ni paramètres d’URL, ni cookies, ni mots de passe. Les fichiers statiques servis par Plesk ne transitent pas par ce journal API. **Accès** permet de créer, désactiver, réactiver et réinitialiser un compte, ainsi que de modifier le Premium. Les préférences, favoris et abonnements utilisent le même profil que le bot. Les profils sans Telegram ne reçoivent pas d’alertes Telegram.
 
@@ -30,7 +30,7 @@ Une session navigateur expire après trente jours ; une approbation Telegram apr
 
 ## Inventaire
 
-Le site affiche jusqu’à 800 locations cohérentes réellement vues sur les portails depuis moins de trente jours. Les anciennes fiches sont conservées séparément ; les favoris anciens portent une indication de revérification. Les données de compte et du flux sont actualisées automatiquement. Voir [l’audit des sources](SCRAPING_AUDIT.md) pour les limites de collecte.
+Le site affiche les locations cohérentes réellement vues sur les portails depuis moins de trente jours, par pages de 18 annonces. Filtres, tri et comptage portent sur tout l’inventaire côté serveur, au-delà des anciennes 800 fiches. Les favoris restent accessibles séparément, avec leurs notes privées et la date de contrôle de chaque publication. L’actualisation est suspendue quand l’onglet est masqué ; les requêtes ne se chevauchent pas. Voir [l’audit des sources](VALIDATION.md) pour les limites de collecte.
 
 Migration du 24 octobre 2026 : copie SQLite avant ajout des tables web, sauvegarde privée de la configuration et image `tgbbot:before-selfhost-20261024` pour référence. Aucun compte, filtre, favori ou historique d’alerte n’est supprimé par cette migration.
 
@@ -49,3 +49,25 @@ La carte utilise [OpenStreetMap](https://wiki.openstreetmap.org/wiki/Export#Embe
 ## Version Plesk mutualisée
 
 Le [guide Plesk](PLESK.md) décrit l’archive prête à envoyer depuis le gestionnaire de fichiers : frontend compilé et passerelle PHP 8.2+. Les variables `WEB_PROXY_ORIGIN` et `WEB_PROXY_SECRET` autorisent une origine HTTPS distante avec des requêtes signées, horodatées et non réutilisables. Le secret reste hors de `httpdocs`. Le bot et les collecteurs continuent à tourner sur le serveur Python ; aucun accès public supplémentaire n’est activé automatiquement.
+
+## Suivi des favoris et alertes
+
+Les favoris proposent un comparateur de deux à quatre biens et un suivi personnel : notes privées, étape de contact, visite et rappel facultatif. Les historiques de loyers sont séparés par publication afin de distinguer une vraie baisse d’un écart entre portails. La disponibilité indique la date du contrôle ; deux constats d’absence espacés d’au moins six heures sont nécessaires pour confirmer une disparition. Une erreur reste un échec de vérification.
+
+**Mon compte** règle le fuseau, les heures silencieuses, le résumé quotidien Telegram et les alertes de baisse. Le délai Free reste appliqué. **Alertes** conserve les baisses et rappels du compte ; les envois Telegram nécessitent une liaison. L’administrateur consulte les médianes et 95es percentiles dans **Sources & activité → Performance**. [Réalisation et limites](RELEASES.md).
+
+## Localisation par zone et comparaison personnelle
+
+La fiche présente une zone réellement attachée à la carte, avec zoom, déplacement, clavier et recentrage. Le repère disponible apparaît d’abord ; le contour officiel d’une commune le remplace lorsqu’il est résolu. Un cercle indicatif reste explicitement distinct d’un contour administratif et d’une adresse. L’échec du fond de carte permet de réessayer et conserve la zone ; une erreur du composant laisse le reste de la fiche utilisable.
+
+Dans **Votre suivi → Vos critères de comparaison**, chaque favori peut recevoir une destination, un mode et une durée de trajet relevée, puis un stationnement et une accessibilité vérifiés. Le comparateur affiche ces critères privés et permet un export CSV. Une absence de donnée reste une absence, sans score ou temps de trajet inventé. [Livraison des zones et suites de la ROADMAP](RELEASES.md).
+
+## Libellés et dates des caractéristiques
+
+Les caractéristiques exposées à l’utilisateur passent par une présentation métier commune avec Telegram : libellés français, unités, dates numériques avec secondes à l’heure de Paris, suppression des paramètres techniques et liens nommés. Les anciennes annonces sont corrigées à la lecture ; les données sources restent intactes. [Règles et validation](RELEASES.md).
+
+## Retrouver les suivis des logements
+
+**Mes suivis** réunit les favoris et les notes conservées des anciens favoris. L’accès est disponible dans la navigation, dans le menu mobile et depuis **Mes favoris → Mes suivis**. Rechercher un titre, une ville, une note ou une destination de trajet, filtrer par étape ou par archivage, et retrouver les visites à venir. Les résultats sont paginés par 20 ; le tri initial place les prochaines visites en premier. « Ouvrir le suivi » mène au formulaire de la fiche. « Reprendre le suivi » remet explicitement un ancien favori dans la sélection. Une annonce retirée laisse consultable la note personnelle, sans republier ses détails. Les rappels de visite nécessitent un favori actif.
+
+Dans **Administration → Sources & activité → Clés et quotas → FlashProxy**, les champs **Plan ID FlashProxy 1** et **Plan ID FlashProxy 2 (facultatif)** permettent d’utiliser deux plans en même temps sous la même clé API. La paire est persistante. Les connexions alternent entre deux sessions en cache et les quotas sont affichés par plan après vérification. Si la génération d’une session échoue, l’autre plan est essayé. Retirer le second ID conserve le premier ; vider les deux active la sélection automatique si un seul plan est actif. Les anciens quotas sont effacés lors d’un changement de paire.

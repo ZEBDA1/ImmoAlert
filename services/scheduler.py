@@ -3,13 +3,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
+from sqlalchemy import select
 
 from database import repo
 from database import models as m
@@ -35,7 +38,7 @@ from services.scam import detect_scam
 from services.notification import send_alert
 from config import settings
 from utils.images import decode_images, encode_images
-from utils.fetch_diagnostics import capture_problems
+from utils.fetch_diagnostics import capture_problems, note_event, safe_message, write_source_diagnostics
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +75,7 @@ class LocationFetchResult:
     timeout_count: int = 0
     error_count: int = 0
     error: str | None = None
+    diagnostics: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -89,6 +93,7 @@ class SourceCollectResult:
     error_count: int = 0
     last_error: str | None = None
     status: str = "success"
+    diagnostics: list[dict] = field(default_factory=list)
 
     @property
     def duration_seconds(self) -> float:
@@ -115,6 +120,16 @@ class ExistingBackfillResult:
     @property
     def action_count(self) -> int:
         return self.sent_count + self.pending_count
+
+
+@dataclass
+class FilterInventoryResult:
+    sources_total: int = 0
+    sources_done: int = 0
+    listings_seen: int = 0
+    matches_count: int = 0
+    failed_sources: int = 0
+    errors: list[str] = field(default_factory=list)
 
 
 def _now_utc() -> datetime:
@@ -146,7 +161,18 @@ def _ensure_source_health(source: str) -> dict:
             "last_new_count": 0,
             "last_status": "never_run",
             "last_cycle_id": None,
+            "last_finished_at":None,
         }
+        # A process restart must not bypass a portal's persisted cooldown.
+        try:
+            with repo.session_scope() as session:
+                run = session.scalar(select(m.SourceRun).where(m.SourceRun.source == source)
+                                     .order_by(m.SourceRun.finished_at.desc(), m.SourceRun.id.desc()).limit(1))
+                if run:
+                    _source_health[source].update(_health_from_run(run))
+        except Exception:
+            # The scheduler can also be inspected before the database is ready.
+            pass
     return _source_health[source]
 
 
@@ -174,6 +200,7 @@ def _health_from_run(run: m.SourceRun) -> dict:
         "last_new_count": run.new_count,
         "last_status": run.status,
         "last_cycle_id": run.cycle_id,
+        "last_finished_at":run.finished_at,
     }
 
 
@@ -181,7 +208,8 @@ def get_sources_health() -> dict[str, dict]:
     out = {source: dict(raw) for source, raw in _source_health.items()}
     try:
         for run in repo.get_latest_source_runs(limit=50):
-            if run.source not in out or not out[run.source].get("last_cycle_id"):
+            current=out.get(run.source,{})
+            if not current.get("last_cycle_id") or run.finished_at and (not current.get("last_finished_at") or run.finished_at>current["last_finished_at"]):
                 out[run.source] = _health_from_run(run)
     except Exception:
         pass
@@ -221,6 +249,7 @@ def _record_source_result(cycle_id: str, result: SourceCollectResult, new_count:
     h = _ensure_source_health(result.source)
     h["total_runs"] += 1
     h["last_cycle_id"] = cycle_id
+    h["last_finished_at"]=result.finished_at
     h["last_status"] = result.status
     h["last_listings_count"] = result.unique_count
     h["last_raw_count"] = result.raw_count
@@ -233,7 +262,7 @@ def _record_source_result(cycle_id: str, result: SourceCollectResult, new_count:
     h["last_cycle_seconds"] = result.duration_seconds
     h["last_locations_count"] = result.locations_count
     h["last_new_count"] = new_count
-    h["last_error"] = result.last_error[:400] if result.last_error else None
+    h["last_error"] = safe_message(result.last_error)[:400] if result.last_error else None
 
     if result.unique_count > 0:
         h["consecutive_empty_runs"] = 0
@@ -271,7 +300,12 @@ def _record_source_result(cycle_id: str, result: SourceCollectResult, new_count:
             error_count=result.error_count,
             disabled_until=h.get("disabled_until"),
             last_error=h.get("last_error"),
+            diagnostics_json=json.dumps(result.diagnostics[:80],ensure_ascii=False),
         )
+        if result.status!="success" or any(event.get("code")!="http_ok" for event in result.diagnostics):
+            write_source_diagnostics(source=result.source,cycle_id=cycle_id,status=result.status,events=result.diagnostics)
+        if result.last_error:
+            log.warning("source_diagnostic cycle=%s source=%s status=%s cause=%s",cycle_id,result.source,result.status,h["last_error"])
     except Exception as exc:
         log.warning("Failed to persist source run for %s: %s", result.source, exc)
 
@@ -374,6 +408,8 @@ def _persist_listing_candidate(listing: ScrapedListing) -> repo.ListingSaveResul
         inventory_status="active",
         **metadata,
     )
+    if saved.listing and saved.listing.removed_at is not None:
+        return repo.ListingSaveResult(listing=None,is_new=False,duplicate_reason="admin_removed")
     if saved.listing:
         listing.db_id = saved.listing.id
         original.db_id = saved.listing.id
@@ -392,6 +428,8 @@ async def _deliver_listing_to_user_filter(bot: Bot, user: m.User, f: m.Filter, l
         from services.listing_details import resolve_new_listing
         original_id=saved.listing.id
         saved.listing = await resolve_new_listing(saved.listing)
+        if not saved.listing or saved.listing.removed_at is not None:
+            return ListingDeliveryResult(status="not_saved")
         saved.is_new=saved.listing.id==original_id
         listing.db_id = saved.listing.id
     if not saved.listing:
@@ -404,7 +442,9 @@ async def _deliver_listing_to_user_filter(bot: Bot, user: m.User, f: m.Filter, l
     score_label = _score_label_for_filter(f.name, res.score_label)
     match_reasons = _match_reasons_text(res.reasons)
 
-    if user.is_premium:
+    from services.alert_preferences import hold_ordinary
+    defer=await asyncio.to_thread(hold_ordinary,user.id)
+    if user.is_premium and not defer:
         scam = await asyncio.to_thread(detect_scam, listing)
         scam_tag = "Potentielle arnaque" if scam.is_scam else None
         await send_alert(bot, user, listing, score_label, scam_tag)
@@ -419,7 +459,7 @@ async def _deliver_listing_to_user_filter(bot: Bot, user: m.User, f: m.Filter, l
         )
         return ListingDeliveryResult(status="sent", is_new=saved.is_new)
 
-    not_before = datetime.utcnow() + timedelta(seconds=settings.premium_free_delay_seconds)
+    not_before = datetime.utcnow() + timedelta(seconds=0 if user.is_premium else settings.premium_free_delay_seconds)
     added = repo.add_pending_alert(
         user.id,
         db_listing.id,
@@ -439,6 +479,8 @@ async def _process_new_listing(bot: Bot, listing: ScrapedListing) -> bool:
         from services.listing_details import resolve_new_listing
         original_id=saved.listing.id
         saved.listing = await resolve_new_listing(saved.listing)
+        if not saved.listing or saved.listing.removed_at is not None:
+            return False
         saved.is_new=saved.listing.id==original_id
         listing.db_id = saved.listing.id
     if not saved.listing:
@@ -473,7 +515,9 @@ async def _process_new_listing(bot: Bot, listing: ScrapedListing) -> bool:
         score_label = _score_label_for_filter(f.name, res.score_label)
         match_reasons = _match_reasons_text(res.reasons)
 
-        if user.is_premium:
+        from services.alert_preferences import hold_ordinary
+        defer=await asyncio.to_thread(hold_ordinary,user.id)
+        if user.is_premium and not defer:
             try:
                 await send_alert(bot, user, listing, score_label, scam_tag)
                 repo.mark_alert_sent(
@@ -498,7 +542,7 @@ async def _process_new_listing(bot: Bot, listing: ScrapedListing) -> bool:
                     match_reasons=match_reasons,
                 )
         else:
-            not_before = datetime.utcnow() + timedelta(seconds=settings.premium_free_delay_seconds)
+            not_before = datetime.utcnow() + timedelta(seconds=0 if user.is_premium else settings.premium_free_delay_seconds)
             repo.add_pending_alert(
                 user.id,
                 db_listing.id,
@@ -514,11 +558,20 @@ async def _process_new_listing(bot: Bot, listing: ScrapedListing) -> bool:
 
 
 async def _dispatch_pending(bot: Bot):
+    from services.member_notifications import _dispatch_lock
+    async with _dispatch_lock:
+        await _dispatch_pending_impl(bot)
+
+
+async def _dispatch_pending_impl(bot: Bot):
     now = datetime.utcnow()
     for pa in repo.fetch_due_pending_alerts(now):
         user = repo.get_user_by_id(pa.user_id)
         if not user or not user.active or not user.telegram_id:
             repo.set_pending_alert_status(pa.id, "canceled")
+            continue
+        from services.alert_preferences import hold_ordinary
+        if await asyncio.to_thread(hold_ordinary,user.id,now):
             continue
         db_listing = repo.get_listing_by_id(pa.listing_id)
         if not db_listing or not repo.is_current_listing(db_listing):
@@ -602,7 +655,8 @@ def _source_timeout_seconds(scraper) -> float:
 
     if scrapling_enabled():
         base = max(base, settings.scrapling_timeout_seconds * 2 + settings.flashproxy_timeout_seconds * 2 + 10)
-    if settings.firecrawl_enabled:
+    from services.provider_credentials import provider_enabled
+    if provider_enabled("firecrawl"):
         base = max(base, settings.scrapling_timeout_seconds * 2 + settings.firecrawl_timeout_seconds + 30)
     override = getattr(scraper, "timeout_seconds", None)
     if callable(override):
@@ -617,11 +671,15 @@ def _source_timeout_seconds(scraper) -> float:
     return float(base)
 
 
-async def _fetch_listings_non_blocking(scraper, city: str | None, postal: str | None, problems: list[str] | None = None) -> list[ScrapedListing]:
+async def _fetch_listings_non_blocking(scraper, city: str | None, postal: str | None, problems: list[str] | None = None, events: list[dict] | None = None) -> list[ScrapedListing]:
     loop = asyncio.get_running_loop()
     def fetch():
-        with capture_problems(problems if problems is not None else []):
-            return list(scraper.fetch_city(city, postal))
+        with capture_problems(problems if problems is not None else [],events,source=scraper.source):
+            try:
+                return list(scraper.fetch_city(city, postal))
+            except Exception as exc:
+                note_event("scraper_exception",stage="extraction",exception=exc)
+                raise
     return await asyncio.wait_for(
         loop.run_in_executor(_scraper_executor, fetch),
         timeout=_source_timeout_seconds(scraper),
@@ -632,7 +690,7 @@ async def _collect_one_location(scraper, city: str | None, postal: str | None) -
     result = LocationFetchResult(city=city, postal=postal)
     try:
         problems: list[str] = []
-        raw = await _fetch_listings_non_blocking(scraper, city, postal, problems)
+        raw = await _fetch_listings_non_blocking(scraper, city, postal, problems,result.diagnostics)
         result.raw_count = len(raw)
         for listing in raw:
             item = normalize_listing(listing, fallback_city=city, fallback_postal=postal)
@@ -641,20 +699,26 @@ async def _collect_one_location(scraper, city: str | None, postal: str | None) -
                 result.normalized_count += 1
             else:
                 result.dropped_count += 1
+        with capture_problems(problems,result.diagnostics,source=scraper.source):
+            if result.dropped_count:
+                note_event("quality_rejected",stage="validation",raw_count=len(raw),valid_count=result.normalized_count,rejected_count=result.dropped_count)
+            if not raw:
+                note_event("no_records",stage="extraction",raw_count=0,valid_count=0,message="Aucune annonce extraite ; vérifier les requêtes et les sélecteurs.")
         if not result.listings and (problems or raw):
             result.error_count = 1
             result.error = "; ".join(problems)[:400] if problems else "all_records_rejected_by_quality_checks"
     except asyncio.TimeoutError:
         result.timeout_count = 1
         result.error = f"timeout for {city}/{postal}"
+        result.diagnostics.append({"code":"timeout","stage":"collection","message":f"Budget dépassé ({_source_timeout_seconds(scraper):g} s).","exception_type":"TimeoutError"})
         log.warning("Scraper %s timed out for %s/%s", scraper.source, city, postal)
     except Exception as exc:
         result.error_count = 1
-        result.error = str(exc)[:400]
+        result.error = safe_message(exc)[:400]
         if "404 Client Error" in result.error or "Playwright Sync API" in result.error:
-            log.info("Scraper %s unavailable for %s/%s: %s", scraper.source, city, postal, exc)
+            log.info("Scraper %s unavailable for %s/%s: %s", scraper.source, city, postal, result.error)
         else:
-            log.warning("Scraper %s failed for %s/%s: %s", scraper.source, city, postal, exc)
+            log.warning("Scraper %s failed for %s/%s: %s", scraper.source, city, postal, result.error)
     return result
 
 
@@ -686,7 +750,7 @@ async def _collect_source_listings_impl(scraper, locs, progress):
     unexpected_errors: list[str] = []
     for item in gathered:
         if isinstance(item, Exception):
-            unexpected_errors.append(str(item)[:400])
+            unexpected_errors.append(safe_message(item)[:400])
         else:
             location_results.append(item)
 
@@ -737,6 +801,7 @@ async def _collect_source_listings_impl(scraper, locs, progress):
         error_count=error_count,
         last_error=errors[-1] if errors else None,
         status=status,
+        diagnostics=[{**event,"city":item.city,"postal_code":item.postal} for item in location_results for event in item.diagnostics][:80],
     )
 
 
@@ -748,7 +813,8 @@ def _failed_collect_result(source: str, locs_count: int, exc: Exception) -> Sour
         finished_at=now,
         locations_count=locs_count,
         error_count=1,
-        last_error=str(exc)[:400],
+        last_error=safe_message(exc)[:400],
+        diagnostics=[{"code":"collection_exception","stage":"collection","exception_type":type(exc).__name__,"message":safe_message(exc)}],
         status="failed",
     )
 
@@ -853,6 +919,106 @@ def _locations_for_filter(f: m.Filter) -> list[tuple[str | None, str | None]]:
     return [(None, None)]
 
 
+async def collect_filter_inventory_once(
+    bot: Bot,
+    user: m.User,
+    flt: m.Filter,
+    *,
+    progress: Callable[[FilterInventoryResult, str], Awaitable[None]] | None = None,
+    is_current: Callable[[], bool] | None = None,
+) -> FilterInventoryResult:
+    """Refresh a website search through the regular inventory/alert pipeline.
+
+    Unlike Telegram's short initial-message backfill, every valid observation is
+    saved. In particular, a local account needs neither a Telegram identifier nor
+    a notification allowance to populate its website results.
+    """
+    if flt.user_id != user.id or not flt.active:
+        raise ValueError("Recherche introuvable ou désactivée.")
+    out = FilterInventoryResult()
+    locations = _locations_for_filter(flt)
+    enabled = []
+    for scraper in SCRAPERS:
+        if _source_enabled(scraper.source):
+            source_locations = _sample_locs_for_source(scraper.source, locations)
+            if source_locations:
+                enabled.append((scraper, source_locations))
+    out.sources_total = len(enabled)
+    cycle_id = f"search-{uuid4().hex}"
+    matched_ids: set[int] = set()
+
+    async def notify(stage: str):
+        if progress:
+            await progress(out, stage)
+
+    async def collect(scraper, source_locations):
+        try:
+            result = await _collect_source_listings(scraper, source_locations)
+        except Exception as exc:
+            result = _failed_collect_result(scraper.source, len(source_locations), exc)
+        return result
+
+    def check_current():
+        if is_current and not is_current():
+            raise asyncio.CancelledError()
+
+    check_current()
+    await notify("Consultation des sources")
+    tasks = [asyncio.create_task(collect(scraper, source_locations)) for scraper, source_locations in enabled]
+    try:
+        for completed in asyncio.as_completed(tasks):
+            result = await completed
+            check_current()
+            # An administrator may pause a source while its HTTP request is in
+            # progress. Do not consume its results after that explicit pause.
+            if repo.get_runtime_setting(f"source_enabled:{result.source}") == "false":
+                out.sources_done += 1
+                out.failed_sources += 1
+                out.errors.append(f"{result.source} : source désactivée pendant la collecte.")
+                await notify("Source mise en pause")
+                continue
+            new_count = 0
+            persistence_errors = 0
+            await notify("Analyse et dédoublonnage des annonces")
+            for listing in result.listings:
+                check_current()
+                out.listings_seen += 1
+                try:
+                    if await _process_new_listing(bot, listing):
+                        new_count += 1
+                    if listing.db_id and match_and_score(flt, listing).matched:
+                        # Several publications can resolve to the same property.
+                        canonical = repo.get_listing_by_id(listing.db_id)
+                        if canonical and repo.is_current_listing(canonical):
+                            matched_ids.add(canonical.id)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    persistence_errors += 1
+                    log.warning("Search inventory persistence failed (%s)", type(exc).__name__)
+            if persistence_errors:
+                result.error_count += persistence_errors
+                result.status = "partial" if new_count else "failed"
+                result.last_error = "Some extracted listings could not be saved"
+            _record_source_result(cycle_id, result, new_count)
+            out.sources_done += 1
+            out.matches_count = len(matched_ids)
+            if result.status not in {"success"}:
+                out.failed_sources += 1
+                # Raw fetch errors may contain provider details. Keep the user
+                # message generic; administrators have the source diagnostics.
+                detail = "aucune annonce extraite, disponibilité non confirmée" if result.status == "empty" else "collecte incomplète ou indisponible"
+                out.errors.append(f"{result.source} : {detail}.")
+            await notify("Actualisation des résultats")
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    check_current()
+    return out
+
+
 async def run_filter_backfill_once(
     bot: Bot,
     user: m.User,
@@ -913,14 +1079,32 @@ async def run_filter_backfill_once(
     return out
 
 
-async def run_scheduler(bot: Bot, *, interval_min: int = 30, interval_max: int = 60):
+_schedule_state: dict = {}
+
+
+def schedule_status() -> dict:
+    return {"interval_seconds":settings.scheduler_interval_seconds, **_schedule_state}
+
+
+async def run_scheduler(bot: Bot, *, interval_seconds: int | None = None):
+    interval=interval_seconds if interval_seconds is not None else settings.scheduler_interval_seconds
+    if interval<=0:
+        raise ValueError("L’intervalle de collecte doit être positif.")
+    loop=asyncio.get_running_loop()
     while True:
-        cycle_id = f"{_now_utc():%Y%m%d%H%M%S}-{uuid4().hex[:8]}"
+        started=loop.time()
+        moment=_now_utc()
+        _schedule_state.update(running=True,last_started_at=moment.isoformat()+"Z",
+            next_run_at=(moment+timedelta(seconds=interval)).isoformat()+"Z",interval_seconds=interval)
+        cycle_id = f"{moment:%Y%m%d%H%M%S}-{uuid4().hex[:8]}"
         try:
             await _run_scan_cycle(bot, cycle_id=cycle_id)
-        except Exception as e:
-            log.exception("Scheduler iteration failed: %s", e)
-        await asyncio.sleep(random.randint(interval_min, interval_max))
+        except Exception as exc:
+            log.error("Scheduler iteration failed (%s)",type(exc).__name__)
+        finally:
+            _schedule_state["running"]=False
+        # Start-to-start cadence. Slow cycles never overlap another regular run.
+        await asyncio.sleep(max(0,interval-(loop.time()-started)))
 
 
 async def run_full_scan_once(bot: Bot) -> dict[str, int]:

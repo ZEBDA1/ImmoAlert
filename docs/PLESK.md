@@ -123,7 +123,7 @@ Dans **Paramètres PHP**, sélectionner PHP 8.2 ou supérieur et vérifier `curl
 
 ## 4. Se connecter et créer les accès
 
-Ouvrir le domaine HTTPS. Un administrateur déjà défini par `ADMIN_TELEGRAM_IDS` peut utiliser **Se connecter → Continuer avec Telegram** pour accéder à l’administration, puis **Accès → Créer un accès**. Il peut créer son propre identifiant en choisissant son profil Telegram existant. Les comptes nouveaux fonctionnent sans Telegram.
+Ouvrir le domaine HTTPS. Un administrateur déjà défini par `ADMIN_TELEGRAM_IDS` peut utiliser **Se connecter → Continuer avec Telegram** pour accéder à l’administration, puis **Comptes utilisateurs → Créer un accès**. Il peut créer son propre identifiant en choisissant son profil Telegram existant. Les comptes nouveaux fonctionnent sans Telegram.
 
 Pour un serveur neuf, un administrateur disposant du terminal du **backend** peut initialiser un accès avec :
 
@@ -133,14 +133,14 @@ docker compose --project-name tgbbot exec tgbbot python scripts/create_web_admin
 
 Le mot de passe généré s’affiche une seule fois. Aucun compte par défaut ni mot de passe prédéfini n’est livré. L’interface publique ne comporte aucune inscription. Les mots de passe sont stockés sous forme de dérivés scrypt avec un sel propre à chacun.
 
-Un utilisateur peut ensuite relier Telegram depuis **Mon accès**. Une approbation explicite dans le bot est nécessaire. Ses recherches et favoris sont conservés ; si un profil Telegram existe déjà, les données sont regroupées sans écraser les favoris. Une recherche homonyme est conservée sous un nom distinct et peut être inactive si le compte Free possède déjà sa recherche principale.
+Un utilisateur peut ensuite relier Telegram depuis **Mon compte**. Une approbation explicite dans le bot est nécessaire. Ses recherches et favoris sont conservés ; si un profil Telegram existe déjà, les données sont regroupées sans écraser les favoris. Une recherche homonyme est conservée sous un nom distinct et peut être inactive si le compte Free possède déjà sa recherche principale.
 
 ## Vérifications après installation
 
 1. `https://immo.example.com/api/index.php?route=%2Fapi%2Fhealth` répond `{"status":"ok"}`.
 2. L’identifiant et le mot de passe ouvrent le site sans Telegram.
 3. Un membre ne voit ni les comptes, ni la supervision, et reçoit un refus s’il appelle directement les routes admin.
-4. L’administrateur voit les sources, les collectes en cours et le trafic dans **Console**.
+4. L’administrateur voit les sources, les collectes en cours et le trafic dans **Sources & activité**.
 5. Un changement de Premium prend effet sur le même profil dans le site et le bot ; désactiver un accès ou régénérer son mot de passe révoque ses sessions web.
 
 Une réponse `503` signale une configuration manquante ou invalide, ou une extension PHP indisponible. Une réponse `502` signale un backend inaccessible, un problème TLS ou une réponse inattendue. Un `403` peut signaler une origine ou un secret qui ne concorde pas. Les erreurs publiques ne révèlent pas les clés ni les détails cURL.
@@ -155,3 +155,9 @@ python3 scripts/package_plesk.py
 ```
 
 Le frontend est versionné dans `web/`. Cette commande produit `dist/immoalert-plesk.zip` et son SHA-256. Elle compile dans un répertoire temporaire et conserve le build local du site. Elle embarque exclusivement les fichiers du site, la passerelle, la configuration d’exemple et ce guide. Aucune base, session, clé API, configuration `.env` ni mot de passe utilisateur n’est inclus.
+
+## Version 2.1
+
+Télécharger l’archive `immoalert-plesk.zip` et son empreinte SHA-256 depuis les [versions GitHub](https://github.com/ZEBDA1/ImmoAlert/releases/latest). Transférer tout `httpdocs/`, y compris `api/index.php`, et conserver la configuration privée propre à l’instance. Mettre à jour le backend depuis la même version pour disposer des routes de suivi, de comparaison, de notifications et de localisation.
+
+Les migrations de démarrage sont additives. Effectuer une sauvegarde cohérente de la base et du fichier maître des clés avant toute mise à jour. Aucun fichier de production ne fait partie de l’archive. Les champs des deux plans FlashProxy se trouvent dans Administration → Sources & activité → Clés et quotas.

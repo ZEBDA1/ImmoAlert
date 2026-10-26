@@ -7,69 +7,19 @@ from urllib.parse import urlencode, urljoin
 from bs4 import BeautifulSoup
 
 from .base import BaseScraper, ScrapedListing
-from utils.cache import TTLCache
 from utils.http import fetch_html, http_client
+from utils.locations import resolve_commune
 from utils.text import parse_float, parse_int
 from utils.text import parse_price_eur, parse_rooms, parse_surface_m2, clean_text
 from scraper.html_helpers import card_images, canonical_url
-
-
-INSEE_CACHE = TTLCache(ttl_seconds=24 * 3600)
 
 
 class ParuVenduScraper(BaseScraper):
     source = "paruvendu"
 
     def _resolve_insee(self, city: Optional[str], postal_code: Optional[str]) -> Optional[str]:
-        if postal_code:
-            key = f"insee:postal:{postal_code}:{(city or '').lower()}"
-            cached = INSEE_CACHE.get(key)
-            if cached:
-                return cached
-
-            params = {
-                "codePostal": postal_code,
-                "fields": "nom,code,codesPostaux",
-                "format": "json",
-            }
-            from utils.locations import public_json
-            communes = public_json("https://geo.api.gouv.fr/communes", params) or []
-            if not communes:
-                return None
-            if city:
-                city_norm = city.lower().replace("-", " ").strip()
-                for c in communes:
-                    name = (c.get("nom") or "").lower().replace("-", " ").strip()
-                    if city_norm in name or name in city_norm:
-                        code = c.get("code")
-                        if code:
-                            INSEE_CACHE.set(key, code)
-                            return code
-            code = communes[0].get("code")
-            if code:
-                INSEE_CACHE.set(key, code)
-            return code
-
-        if city:
-            key = f"insee:city:{city.lower()}"
-            cached = INSEE_CACHE.get(key)
-            if cached:
-                return cached
-            params = {
-                "nom": city,
-                "fields": "nom,code,codesPostaux",
-                "format": "json",
-                "boost": "population",
-                "limit": "5",
-            }
-            from utils.locations import public_json
-            communes = public_json("https://geo.api.gouv.fr/communes", params) or []
-            if communes:
-                code = communes[0].get("code")
-                if code:
-                    INSEE_CACHE.set(key, code)
-                    return code
-        return None
+        commune = resolve_commune(city, postal_code)
+        return commune["code"] if commune else None
 
     def _search_url(self, city: Optional[str], postal_code: Optional[str]) -> str:
         insee = self._resolve_insee(city, postal_code)
@@ -84,6 +34,8 @@ class ParuVenduScraper(BaseScraper):
             if city or postal_code:
                 params["ray"] = "15"
             return f"https://www.paruvendu.fr/immobilier/annonceimmofo/liste/listeAnnonces?{urlencode(params)}"
+        if city or postal_code:
+            return ""
         return "https://www.paruvendu.fr/immobilier/location/"
 
     def _listing_urls(self, search_url: str) -> list[str]:
@@ -194,6 +146,8 @@ class ParuVenduScraper(BaseScraper):
 
     def fetch_city(self, city: Optional[str], postal_code: Optional[str]) -> Iterable[ScrapedListing]:
         search_url = self._search_url(city, postal_code)
+        if not search_url:
+            return
         html = fetch_html(search_url, referer="https://www.paruvendu.fr/")
         if html:
             rows = self._parse_cards(html)

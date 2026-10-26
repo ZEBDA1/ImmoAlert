@@ -1495,7 +1495,7 @@ async def cb_listing_details(callback: CallbackQuery):
     except (ValueError,TypeError):
         return
     row=repo.get_listing_by_id(identifier)
-    if not row or row.inventory_status=="invalid":
+    if not row or row.inventory_status=="invalid" or row.removed_at is not None:
         await callback.message.answer("Cette annonce est introuvable.")
         return
     # Show progress for slow portals and keep a single message when paginating.
@@ -1507,6 +1507,10 @@ async def cb_listing_details(callback: CallbackQuery):
             row=await asyncio.wait_for(get_listing_details(identifier),timeout=22)
         except asyncio.TimeoutError:
             pass
+    if callback.from_user:
+        profile=await asyncio.to_thread(repo.get_user_by_telegram_id,callback.from_user.id)
+        if profile:
+            await asyncio.to_thread(repo.mark_listing_read,profile.id,row.id)
     pages=detail_pages(row)
     page=min(page,len(pages)-1)
     try:

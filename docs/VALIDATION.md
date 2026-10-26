@@ -1,10 +1,12 @@
 # Validation
 
-[Retour au README](../README.md)
+La version 2.1 passe **407 exécutions de tests backend** sur Python 3.11. La CI exécute également la suite avec Python 3.12. Les appels fournisseurs sont simulés dans les tests ; les comptes et logements des contrôles navigateur sont fictifs.
 
-## Suite actuelle
+## Backend et données
 
-La suite compte **216 tests de régression**, vérifiés en conteneur Python 3.11 avec le réseau externe désactivé. Les données de compte et les réponses des portails utilisées par les tests sont fictives ou simulées.
+La suite couvre l’authentification par mot de passe et Telegram, les droits, les migrations additives, les collecteurs, le regroupement des publications, les prix et la disponibilité, les suivis privés, les notifications, les comparaisons, les zones de localisation et les fournisseurs. Les migrations sont réexécutables et les tests vérifient la conservation des données existantes.
+
+Les tests FlashProxy répartissent notamment 20 attributions entre deux plans avec seulement deux générations de session simulées. Ils contrôlent l’expiration indépendante, le repli, les limites API, les quotas partiels, les changements de configuration concurrents et la compatibilité de l’ancien réglage.
 
 ```bash
 python3 -m pip install -r requirements.txt
@@ -13,56 +15,24 @@ npm --prefix web ci
 npm --prefix web run build
 ```
 
-| Module | Tests | Périmètre |
-| :--- | ---: | :--- |
-| `test_admin_auth.py` | 15 | Comptes sur invitation, mots de passe, sessions, rôles, liaison Telegram, trafic, signature PHP et migration SQLite |
-| `test_web_api.py` | 12 | API privée, connexion Telegram autorisée, origine, fiches complètes, actions, favoris, scans et serveur statique |
-| `test_site_sync.py` | 18 | Profils partagés, recherches, accès Premium, commandes et activation des sources |
-| `test_listing_details.py` | 17 | Doublons entre plateformes, publications, conservation des favoris, détails, galerie, extraction ciblée et pagination Telegram |
-| `test_scraping_audit.py` | 13 | Cohérence des locations, parseurs des portails, inventaire courant et préservation de l’historique |
-| `test_scrapling_backup.py` | 25 | Moteur principal, droits admin, persistance, replis, cache, navigateur et erreurs |
-| `test_flashproxy.py` | 18 | Contrat du fournisseur, cache, erreurs, limites et protection des identifiants |
-| `test_firecrawl_backoff.py` | 18 | Quotas, concurrence, schémas JSON, cache et disponibilité |
-| `test_firecrawl_cli_pool.py` | 1 | Rotation réelle du CLI face à un serveur API local simulant les clés |
-| `test_proxy_transport.py` | 1 | Transport HTTP et navigateur via un proxy local authentifié |
-| `test_text_parsing.py` | 32 | Prix français, surfaces, pièces et loyers mensuels |
-| `test_matching_and_scam.py` | 22 | Critères, types de bien, score et signaux d’arnaque |
-| `test_location_matching.py` | 5 | Villes, codes postaux, arrondissements et preuves de localisation |
-| `test_scheduler.py` | 4 | Collectes partielles, recherche initiale et isolation des tâches lentes |
-| `test_quality_repo.py` | 3 | Qualité, signature canonique et persistance des collectes |
-| `test_alert_delivery.py` | 9 | Envois, reprises, annulations et reprogrammation |
-| `test_ai_features.py` | 2 | Nettoyage des résultats IA et parsing local |
-| `test_premium_limits.py` | 1 | Filtre IA réservé au Premium |
+## Navigateur et passerelle PHP
 
-Les tests qui nécessitent un navigateur réel peuvent être ignorés lorsque Chromium n’est pas installé. L’image Docker du projet inclut Chromium ; les contrôles de publication sont exécutés dans cet environnement.
+Les contrôles utilisent une vraie API et une base jetable. Ils vérifient les parcours ordinateur, téléphone, tablette et paysage dans les thèmes sombre et clair, les brouillons non enregistrés, les préférences persistantes, les suivis, le comparateur et les deux plans FlashProxy. La passerelle est aussi testée avec PHP, cURL, TLS et des requêtes signées.
 
-## Frontend et déploiement
+Installer Playwright et Chromium pour les contrôles visuels ; `IMD_PLAYWRIGHT` peut désigner le chemin de son module `index.mjs`. Les scripts résolvent aussi une installation dans le projet ou dans `web/`.
 
-- Le build exécute TypeScript puis Vite depuis `web/`.
-- L’image Docker construit et embarque le frontend dans `/app/web_dist` ; un clone du dépôt ne dépend d’aucun dossier voisin.
-- `scripts/package_plesk.py` compile un frontend utilisant la passerelle PHP dans un répertoire temporaire, sans modifier le build local.
-- L’archive est contrôlée pour exclure les bases, journaux, `.env` et configurations privées réelles ; un SHA-256 accompagne le ZIP.
-- La syntaxe de la passerelle est vérifiée avec PHP 8.3. Une intégration locale complète a testé TLS, signatures HMAC, cookies Secure/HttpOnly, droits admin, refus d’origine et liste des routes autorisées.
-- Les migrations ont été appliquées sur une copie de la base existante : identifiants des profils et relations conservés, création d’un compte sans Telegram vérifiée, `PRAGMA foreign_key_check` sans erreur.
+```bash
+node scripts/check_member_ui.mjs
+node scripts/check_flashproxy_plan_ui.mjs
+node scripts/check_comparison_csv.mjs
+python3 scripts/check_member_gateway.py
+python3 scripts/package_plesk.py
+```
 
-## Vérification navigateur
+Le contrôle PHP/TLS nécessite Docker et les images du projet/PHP. Les autres scripts créent leur démonstration sur l’interface de boucle locale, sans charger le `.env` ni démarrer le bot ou ses collectes. Les contrôles de carte utilisent des tuiles et contours fictifs.
 
-L’interface a été exécutée sur une base de démonstration isolée, sur ordinateur et sur mobile : connexion par mot de passe, création d’un compte, Premium, accès réservés aux administrateurs, états des sources, trafic API, galerie, agrandissement, navigation au clavier et absence de débordement horizontal.
+## Publication
 
-Les images du README sont reproductibles avec `scripts/capture_docs.py`. Ce script désactive la lecture du `.env` du projet, crée une base temporaire et ne lance ni scheduler ni collecte. Les illustrations des biens et les métriques sont fictives. [Détails des visuels](assets/README.md).
+La CI contrôle les fichiers du snapshot Git puis exécute Gitleaks sur ce snapshot. Les bases, clés, configurations réelles, journaux et preuves opérationnelles restent exclus. Les captures publiques sont issues de démonstrations isolées. Voir [SECURITY.md](../SECURITY.md) et les [visuels](assets/README.md).
 
-## GitHub Actions
-
-Le workflow [CI](../.github/workflows/ci.yml) vérifie :
-
-1. La suite Python sous 3.11 et 3.12.
-2. Le frontend TypeScript/Vite, l’archive Plesk et la syntaxe PHP.
-3. La construction Docker, l’import de l’application, une base neuve, la présence du frontend embarqué et le healthcheck dans un conteneur sans réseau.
-
-L’archive testée est conservée comme artefact de la CI pendant 14 jours. Aucun secret d’exploitation n’est nécessaire. [Résultats GitHub Actions](https://github.com/ZEBDA1/ImmoAlert/actions).
-
-## Limites
-
-Une CI verte ne garantit pas la disponibilité d’un portail protégé, les crédits ou les quotas d’un fournisseur, un délai de détection, ni l’authentification du bot auprès de Telegram. Le healthcheck valide la configuration et la base locale. Les vérifications navigateur utilisent des comptes et annonces fictifs ; elles ne constituent pas une mesure de disponibilité de la production.
-
-Les relevés et benchmarks conservés dans la documentation sont datés. Ils décrivent les conditions de leurs essais, pas une garantie de performances actuelles.
+Une CI verte ne garantit pas l’accès futur aux portails protégés, les quotas d’un fournisseur ou un délai de détection des annonces. Les tests ne doivent pas déclencher de messages Telegram réels.

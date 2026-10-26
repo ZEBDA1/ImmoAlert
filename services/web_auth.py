@@ -186,16 +186,24 @@ def link_profile(session,account,telegram_user,keep_session_id=None):
             if not target.is_premium:
                 row.active=False
         names.add(row.name);row.user_id=target.id
-    for model in (m.Favorite,m.SentAlert,m.PendingAlert):
+    for model in (m.Favorite,m.SentAlert,m.PendingAlert,m.ListingRead,m.ListingReport):
         for row in session.scalars(select(model).where(model.user_id==source.id)):
             existing=session.scalar(select(model).where(model.user_id==target.id,model.listing_id==row.listing_id))
             if existing:
+                if model is m.ListingReport:
+                    if row.status=="open" and existing.status!="removed":
+                        existing.status="open";existing.reviewed_at=None;existing.reviewed_by=None
+                    existing.note="\n".join(v for v in [existing.note,row.note] if v)[:500]
+                if model is m.ListingRead:
+                    existing.read_at=min(existing.read_at,row.read_at)
                 if model is m.PendingAlert and row.status=="sent":
                     existing.status="sent"
                 session.delete(row)
             else:
                 row.user_id=target.id
             session.flush()
+    from services.property_tracking import merge_member_profile
+    merge_member_profile(session,source.id,target.id)
     _revoke(session,source,keep_session_id)
     account.user_id=target.id
     source.active=False

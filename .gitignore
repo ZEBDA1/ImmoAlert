@@ -31,3 +31,21 @@ env/
 .aws/
 dist/
 node_modules/
+
+# Local operational evidence and deployment reports
+/docs/diagnostics/
+/docs/*_2026-*.md
+/docs/SCRAPING_AUDIT.md
+/docs/superpowers/
+/artifacts/
+
+# Private captures, credentials and export archives
+*.har
+*.pem
+*.key
+*.p12
+*.pfx
+*.dump
+*.backup
+*.zip
+*.tar.gz

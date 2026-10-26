@@ -16,6 +16,8 @@ Les collectes synchrones utilisent un `ThreadPoolExecutor` dédié, distinct de 
 
 Les appels Firecrawl passent par des sous-processus avec timeout, fichiers de schéma temporaires et cache local. Le mode d’extraction JSON utilise un schéma, y compris pour le repli par consigne libre. SeLoger recherche aussi l’URL canonique de la zone avant la collecte.
 
+La sauvegarde d’une recherche web crée immédiatement un job dans `services/search_jobs.py`. Son état et sa progression sont conservés dans `runtime_settings` par compte. Deux jobs peuvent s’exécuter simultanément, une seule tâche par utilisateur ; modifier ou supprimer les critères annule les anciens résultats. `collect_filter_inventory_once` réutilise les collecteurs, la normalisation, la persistance et les alertes, même si l’utilisateur n’a pas de compte Telegram. Les sources désactivées, leurs quotas et leurs pauses restent appliqués. Le site invalide ses caches quand la progression change pour présenter les nouvelles fiches sans attendre l’expiration habituelle.
+
 ## Qualité et correspondance
 
 `scraper/quality.py` normalise les annonces et extrait les valeurs utiles. `utils/text.py` traite les prix français, surfaces et pièces. Une localisation manquante reste manquante : le lieu recherché n’est pas ajouté comme preuve de localisation.
@@ -46,7 +48,7 @@ Le frontend React/TypeScript de `web/` est construit par Docker et servi par `se
 
 Les cookies de session sont HttpOnly, SameSite=Lax, et Secure sur HTTPS. Le cookie est renouvelé à la connexion ; seule son empreinte est enregistrée dans `web_sessions`. La réinitialisation d’un mot de passe ou la désactivation d’un accès révoque les sessions correspondantes. La connexion Telegram directe est réservée aux administrateurs configurés et aux profils déjà invités. Un membre connecté peut relier Telegram après approbation dans le bot ; les recherches et favoris sont regroupés sans écraser les relations existantes.
 
-Le site affiche l’inventaire cohérent observé depuis moins de trente jours, dans la limite de 800 fiches. Les aperçus sont légers ; `GET /api/listings/{id}` enrichit à la demande la description, les caractéristiques, la galerie et la localisation. Les coordonnées du portail sont distinguées d’un centre de commune approximatif.
+Le site affiche l’inventaire cohérent observé depuis moins de trente jours par pages bornées, sans limite globale à 800 fiches. `/api/bootstrap` renvoie les métadonnées et `/api/inventory` applique pagination, tri, filtres et droits utilisateur côté serveur. Les aperçus sont légers ; `GET /api/listings/{id}` enrichit à la demande la description, les caractéristiques, la galerie et la localisation. Les coordonnées du portail sont distinguées d’un centre de commune approximatif.
 
 ## Publications d’un même bien
 
@@ -59,3 +61,17 @@ La vérification progressive de l’inventaire existant travaille par petits lot
 `web_requests` enregistre uniquement les métadonnées des appels API : profil, méthode, chemin, action, statut et durée. Les requêtes en cours sont suivies en mémoire. Le journal est limité à 20 000 entrées et trois jours ; les sondes de santé et de supervision ne s’enregistrent pas elles-mêmes. Les fichiers statiques servis par Plesk n’entrent pas dans ce journal.
 
 Sur Plesk mutualisé, le navigateur utilise le frontend et la passerelle PHP du même domaine. Le secret de liaison reste hors de `httpdocs`. La passerelle limite les routes et signe méthode, chemin, empreinte du corps, origine, adresse cliente, horodatage et nonce. Le backend vérifie le HMAC et refuse les signatures expirées ou réutilisées. Le backend permanent peut être exposé par un reverse proxy HTTPS ou un tunnel sortant ; le bot et Chromium ne tournent pas dans le mutualisé.
+
+## Fournisseurs administrables
+
+`provider_configurations` et `provider_credentials` conservent les activations, les secrets chiffrés, leur empreinte, les dernières vérifications et les quotas. Le chiffrement Fernet lie chaque valeur au fournisseur et à son identifiant ; la clé maîtresse est conservée en dehors du code dans `storage/provider-credentials.key`. Les clés de l’environnement sont importées une seule fois ; une révocation dans l’admin ne ressuscite pas au redémarrage.
+
+`services/provider_monitor.py` vérifie les soldes officiels hors du chemin des requêtes utilisateur. Les réponses HTTP ne contiennent que des métadonnées autorisées, jamais le secret déchiffré. Les clients résolvent leurs clés à chaque appel et invalident les caches de configuration lors d’un changement. Les sondes de quota sont distinctes des diagnostics de source, qui effectuent une vraie collecte et peuvent consommer les crédits habituels.
+
+## Services de suivi et mises à jour
+
+`property_tracking` conserve les observations de prix par publication, les notes privées et les contrôles de disponibilité. Le rapprochement après enrichissement ne parcourt que les candidats plausibles du bien ; il transfère les relations, notes et historiques et résout les anciens alias. `alert_preferences` calcule les plages silencieuses en heure locale, y compris les changements d’heure. `member_notifications` dédoublonne l’outbox, traite les rappels et le résumé quotidien, et reprend les erreurs temporaires de Telegram. Les envois hérités et nouveaux partagent un verrou.
+
+Deux boucles distinctes démarrent avec `main.py` : les notifications toutes les 30 secondes et la fraîcheur par passes d’environ une minute, dont la taille s’adapte au nombre de publications favorites et à une cible configurable. Le budget global, deux publications par portail et trois contrôles simultanés bornent le débit. Les métriques sont mises en mémoire dans une file bornée puis écrites par lot toutes les 30 secondes ; leur enregistrement ne bloque pas la première réponse sur une écriture SQL. L’administration force une vidange avant agrégation.
+
+Les fiches récentes réutilisent le cache persistant (24 h si complet, 15 min si partiel). Une collecte partagée renvoie d’abord les données connues après au plus 150 ms d’attente externe. En accès natif, `/events` transmet la fin via SSE ; la passerelle PHP utilise `/updates`, une attente HTTP de 18 secondes au maximum, avec reprise bornée côté client. L’onglet masqué ou la fermeture annule l’écoute du client, sans annuler le travail partagé. [Détails et validation](RELEASES.md).

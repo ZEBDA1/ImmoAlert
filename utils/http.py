@@ -16,7 +16,7 @@ from requests import Response
 from config import settings
 from utils.cache import TTLCache
 from utils.scrapling import fetch_with_scrapling, scrapling_enabled
-from utils.fetch_diagnostics import note_problem
+from utils.fetch_diagnostics import note_problem, note_event
 from .uagents import random_user_agent
 
 BLOCKED_STATUSES = {403, 429, 503}
@@ -135,7 +135,7 @@ def is_probably_blocked(html: str) -> bool:
 
 def fetch_html(url: str, *, referer: Optional[str] = None, timeout: int = 18, headers: dict | None = None) -> Optional[str]:
     from utils.firecrawl import get_client, firecrawl_available
-    from utils.flashproxy import configuration_id
+    from utils.flashproxy import configuration_id, provider_enabled
 
     primary_enabled = scrapling_enabled()
     header_id = hashlib.sha256(json.dumps(headers or {}, sort_keys=True).encode()).hexdigest()[:16]
@@ -151,9 +151,11 @@ def fetch_html(url: str, *, referer: Optional[str] = None, timeout: int = 18, he
         if html and not is_probably_blocked(html):
             _HTML_CACHE.set(cache_key, html)
             return html
+    elif not html:
+        note_event("backup_unavailable",url,engine="firecrawl",message="Secours indisponible : vérifier activation, crédits et temporisation.")
     # The old direct transport is only used when the admin disables Scrapling.
     # An explicitly enabled FlashProxy must never silently bypass its proxy.
-    if primary_enabled or settings.flashproxy_enabled:
+    if primary_enabled or provider_enabled("flashproxy"):
         note_problem("blocked_or_unavailable", url)
         return None
     resp = None

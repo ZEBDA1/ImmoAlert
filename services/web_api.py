@@ -24,7 +24,7 @@ from services import web_auth, admin_monitor
 log = logging.getLogger(__name__)
 COOKIE = "immo_session"
 ADMIN_ACTIONS = {"scrapling", "source", "scan", "premium"}
-ACTIONS = ADMIN_ACTIONS | {"save_filter", "delete_filter", "favorite", "alerts"}
+ACTIONS = ADMIN_ACTIONS | {"save_filter", "delete_filter", "favorite", "alerts", "mark_read", "report_listing"}
 
 
 @dataclass
@@ -34,8 +34,10 @@ class Website:
     origin: str
     bot_username: str
     global_cache: dict | None = None
+    metadata_cache: dict | None = None
     global_at: float = 0
     account_cache: dict = field(default_factory=dict)
+    search_versions: dict = field(default_factory=dict)
     snapshot_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     limits: dict = field(default_factory=lambda: defaultdict(deque))
     inflight: dict = field(default_factory=dict)
@@ -44,6 +46,9 @@ class Website:
     started_at: float = field(default_factory=time.monotonic)
     admin_cache: dict | None = None
     admin_at: float = 0
+    diagnostic_slots: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(2))
+    diagnostic_sources: set = field(default_factory=set)
+    detail_connections: dict = field(default_factory=lambda:defaultdict(int))
 
     def check_rate(self, key: str, maximum: int, seconds: int):
         now = time.monotonic()
@@ -56,22 +61,30 @@ class Website:
             raise web.HTTPTooManyRequests(text=json.dumps({"error":"Trop de demandes. Réessayez dans quelques instants."}), content_type="application/json")
         queue.append(now)
 
-    async def snapshot(self):
+    async def snapshot(self,metadata_only=False):
         async with self.snapshot_lock:
-            if self.global_cache is None or time.monotonic()-self.global_at > 8:
-                self.global_cache = await asyncio.to_thread(service.global_snapshot, self.bot_username)
+            if self.global_at==0 or time.monotonic()-self.global_at>8:
+                self.global_cache=None;self.metadata_cache=None
                 self.global_at = time.monotonic()
-            return dict(self.global_cache)
+            name='metadata_cache' if metadata_only else 'global_cache'
+            if getattr(self,name) is None:
+                setattr(self,name,await asyncio.to_thread(service.global_snapshot,self.bot_username,metadata_only=metadata_only))
+            return dict(getattr(self,name))
 
-    async def account(self, user_id):
-        cached = self.account_cache.get(user_id)
+    async def account(self, user_id,metadata_only=False):
+        key=(user_id,metadata_only)
+        cached = self.account_cache.get(key)
         if not cached or time.monotonic()-cached[0] > 4:
-            data = await asyncio.to_thread(service.account_snapshot, user_id=user_id)
+            data = await asyncio.to_thread(service.account_snapshot, user_id=user_id,metadata_only=metadata_only)
             if len(self.account_cache) > 128:
                 self.account_cache.clear()
-            self.account_cache[user_id] = time.monotonic(), data
+            self.account_cache[key] = time.monotonic(), data
             return data
         return cached[1]
+
+    def invalidate_account(self,user_id):
+        for key in list(self.account_cache):
+            if key==user_id or isinstance(key,tuple) and key[0]==user_id:self.account_cache.pop(key,None)
 
 
 STATE = web.AppKey("website", Website)
@@ -150,6 +163,9 @@ async def boundary(request, handler):
     result.headers.update({"X-Content-Type-Options":"nosniff", "X-Frame-Options":"DENY", "Referrer-Policy":"no-referrer",
         "Content-Security-Policy":"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; font-src 'self'; connect-src 'self'; frame-src https://www.openstreetmap.org; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"})
     result.headers["Cache-Control"] = "private, no-store" if request.path.startswith("/api/") or request.path in {"/","/login"} else "public, max-age=3600"
+    if request.path.startswith('/api/listings/') and request.path.rsplit('/',1)[-1].isdigit():
+        from services import performance
+        performance.elapsed('detail_api',started)
     return result
 
 
@@ -165,24 +181,34 @@ async def current_identity(request, *, complete=True):
 
 async def state(request):
     site = request.app[STATE]
+    compact=request.path=='/api/bootstrap'
     identity, fresh = await current_identity(request)
     if not identity or not identity.get("user_id"):
         commands = await asyncio.to_thread(web_repo.commands, identity, set(service._scan_tasks)) if identity else []
-        return response({"user":None,"account":None,"snapshot":None,"bot_username":site.bot_username,"commands":commands,"synced_at":None})
-    account = await site.account(identity["user_id"])
+        return response({"user":None,"account":None,"snapshot":None,"bot_username":site.bot_username,"commands":commands,"search_jobs":[],"synced_at":None})
+    from services.search_jobs import user_jobs
+    search_jobs=await asyncio.to_thread(user_jobs,identity["user_id"])
+    version=tuple((job["id"],job["status"],job["listings_seen"],job["matches_count"],job["finished_at"]) for job in search_jobs)
+    if site.search_versions.get(identity["user_id"]) != version:
+        site.global_at=0
+        site.invalidate_account(identity["user_id"])
+        if len(site.search_versions)>128:
+            site.search_versions.clear()
+        site.search_versions[identity["user_id"]]=version
+    account = await site.account(identity["user_id"],compact)
     if not account:
         await asyncio.to_thread(web_repo.logout, fresh or request.cookies.get(COOKIE, ""))
         result = response({"error":"Compte introuvable ou désactivé. Reconnectez-vous."},401)
         result.del_cookie(COOKIE, path="/")
         return result
-    snapshot = await site.snapshot()
+    snapshot = await site.snapshot(compact)
     account=dict(account)
     account["is_admin"]=identity["is_admin"]
     if not identity["is_admin"]:
         snapshot.pop("users", None)
     commands = await asyncio.to_thread(web_repo.commands, identity, set(service._scan_tasks))
     result = response({"user":{"name":account.get("login") or account.get("username") or "Membre","linked":bool(identity.get("telegram_id"))}, "account":account,
-                       "snapshot":snapshot,"synced_at":int(time.time()*1000),"commands":commands})
+                       "snapshot":snapshot,"synced_at":int(time.time()*1000),"commands":commands,"search_jobs":search_jobs})
     if fresh:
         cookie(result, fresh, site,request)
     return result
@@ -216,20 +242,43 @@ async def action(request):
         return response({"error":"Accès administrateur requis."},403)
     request["audit_action"]=kind
     site.check_rate("action:"+str(identity["user_id"]),60,60)
+    if kind in {"mark_read","report_listing"}:
+        identifier=payload.get("listing_id")
+        if type(identifier) is not int or not 0<identifier<=1000000000:
+            return response({"error":"Identifiant d’annonce invalide."},400)
+        try:
+            if kind=="report_listing":
+                from services.listing_moderation import report_listing
+                if not isinstance(payload.get("note",""),str) or len(payload.get("note",""))>500:
+                    return response({"error":"Le commentaire doit contenir au maximum 500 caractères."},400)
+                site.check_rate("listing-report:"+str(identity["user_id"]),10,600)
+                report=await asyncio.to_thread(report_listing,identity["user_id"],identifier,payload.get("note",""))
+                site.invalidate_account(identity["user_id"])
+                site.admin_at=0
+                return response(report,201 if report["created"] else 200)
+            canonical=await asyncio.to_thread(repo.mark_listing_read,identity["user_id"],identifier)
+        except PermissionError:
+            return response({"error":"Compte désactivé."},403)
+        except ValueError as exc:
+            return response({"error":str(exc)},404)
+        site.invalidate_account(identity["user_id"])
+        return response({"listing_id":canonical,"read":True})
     try:
         identifier = await asyncio.to_thread(web_repo.create_command, identity, kind)
     except ValueError as exc:
         return response({"error":str(exc)},409)
     command = {"id":identifier,"user_id":identity["id"],"_profile_id":identity["user_id"],"kind":kind,"payload":payload,"created_at":int(time.time()*1000)}
     results = await service.process_commands(site.bot, [command], [{"user_id":identity["id"],"telegram_id":identity["telegram_id"]}])
+    extra={}
     if results:
         item = results[0]
         await asyncio.to_thread(web_repo.finish_command, identifier, item["status"], item.get("result",{}))
         if item["status"] == "failed":
             return response({"id":identifier,"error":item.get("result",{}).get("message","Action impossible.")},400)
+        extra={key:item["result"][key] for key in ("search_id","filter_id") if key in item.get("result",{})}
     site.account_cache.clear()
     site.global_at = 0
-    return response({"id":identifier},202)
+    return response({"id":identifier,**extra},202)
 
 
 async def logout(request):
@@ -281,8 +330,122 @@ async def admin_live(request):
     history=await asyncio.to_thread(admin_monitor.recent_requests)
     inflight=[{**item,"created_at":item["created_at"].isoformat()+"Z","status":None,"duration_ms":round((datetime.utcnow()-item["created_at"]).total_seconds()*1000)} for item in list(site.inflight.values())]
     site.presence={key:value for key,value in site.presence.items() if value["last_seen"]>time.time()-300}
-    return response({**site.admin_cache,"requests":history,"inflight":inflight,
+    return response({**site.admin_cache,"requests":history,"inflight":inflight,"diagnostics":sorted(site.diagnostic_sources),
         "online_users":[{"user_id":key,**value} for key,value in site.presence.items()],"uptime_seconds":int(time.monotonic()-site.started_at),"synced_at":int(time.time()*1000)})
+
+
+async def admin_providers(request):
+    identity=await require_admin(request)
+    from services import provider_credentials as credentials
+    site=request.app[STATE]
+    if request.method=="GET":
+        return response(await asyncio.to_thread(credentials.list_providers))
+    site.check_rate("providers:"+str(identity["user_id"]),30,60)
+    try:
+        payload=await request.json()
+        if not isinstance(payload,dict):
+            raise ValueError("Paramètres invalides.")
+        provider=payload.get("provider")
+        if provider not in {"firecrawl","flashproxy"}:
+            raise ValueError("Fournisseur inconnu.")
+        operation=payload.get("operation","save")
+        if operation not in {"save","delete","refresh","toggle_provider","configure_plan","configure_plans"}:
+            raise ValueError("Opération inconnue.")
+        key_id=payload.get("key_id")
+        if key_id is not None and (not isinstance(key_id,str) or not 1<=len(key_id)<=64):
+            raise ValueError("Identifiant de clé invalide.")
+        if operation in {"delete","refresh"} and not key_id:
+            raise ValueError("Sélectionnez une clé.")
+        request["audit_action"]="provider_"+operation
+        if operation=="configure_plans":
+            if provider!="flashproxy":raise ValueError("Seul FlashProxy accepte des plans IDs.")
+            await asyncio.to_thread(credentials.save_flashproxy_plans,payload.get("plan_ids"))
+            result={"message":"Plans FlashProxy enregistrés. Les prochaines connexions utilisent cette configuration."}
+        elif operation=="configure_plan":
+            if provider!="flashproxy":raise ValueError("Seul FlashProxy accepte un plan ID.")
+            await asyncio.to_thread(credentials.save_flashproxy_plan,payload.get("plan_id"))
+            result={"message":"Plan FlashProxy enregistré. Les prochaines connexions utilisent cette configuration."}
+        elif operation=="toggle_provider":
+            if not isinstance(payload.get("enabled"),bool):
+                raise ValueError("Une valeur activée/désactivée est requise.")
+            record=await asyncio.to_thread(credentials.set_provider_enabled,provider,payload["enabled"])
+            result={"provider":record,"message":"Fournisseur activé." if payload["enabled"] else "Fournisseur désactivé."}
+        elif operation=="save":
+            api_key=payload.get("api_key")
+            label=payload.get("label")
+            enabled=payload.get("enabled")
+            if api_key is not None and (not isinstance(api_key,str) or not 1<=len(api_key)<=2048 or any(c in api_key for c in "\r\n\x00")):
+                raise ValueError("Clé API invalide.")
+            if label is not None and (not isinstance(label,str) or len(label)>60):
+                raise ValueError("Libellé invalide.")
+            if enabled is not None and not isinstance(enabled,bool):
+                raise ValueError("Une valeur activée/désactivée est requise.")
+            record=await asyncio.to_thread(credentials.save_credential,provider,api_key=api_key,key_id=key_id,label=label,enabled=enabled)
+            result={"credential":record,"message":"Clé enregistrée. Les prochaines collectes utilisent cette configuration."}
+        elif operation=="delete":
+            await asyncio.to_thread(credentials.delete_credential,provider,key_id)
+            result={"message":"Clé supprimée."}
+        else:
+            from services.provider_monitor import refresh_usage
+            record=await refresh_usage(provider,key_id)
+            result={"credential":record,"message":"État du fournisseur actualisé."}
+    except (ValueError,TypeError) as exc:
+        return response({"error":str(exc) or "Paramètres invalides."},400)
+    site.admin_at=0;site.global_at=0
+    return response(result)
+
+
+async def _diagnose_source(site,identifier,source):
+    from services import scheduler
+    try:
+        async with site.diagnostic_slots:
+            filters=await asyncio.to_thread(repo.get_all_active_filters)
+            location=next(((f.city,f.postal_code) for f in filters if f.city or f.postal_code),(None,None))
+            result=await scheduler._collect_source_listings(scheduler.get_scraper(source),[location])
+            await asyncio.to_thread(scheduler._record_source_result,"diagnostic-"+identifier[:12],result,0)
+            status="failed" if result.status=="failed" else "succeeded"
+            message=f"Diagnostic {source} terminé : {result.unique_count} annonce(s) cohérente(s)."
+            if result.status=="failed":
+                message=f"Diagnostic {source} : le collecteur n’a pas pu récupérer d’annonces. Consultez son état."
+    except asyncio.CancelledError:
+        status,message="failed","Diagnostic interrompu par le redémarrage du serveur."
+        raise
+    except Exception:
+        status,message="failed","Le diagnostic n’a pas pu terminer."
+    finally:
+        site.diagnostic_sources.discard(source)
+        if "status" in locals():
+            await asyncio.to_thread(web_repo.finish_command,identifier,status,{"message":message})
+        site.admin_at=0;site.global_at=0
+
+
+async def admin_source_check(request):
+    identity=await require_admin(request)
+    from services.scheduler import source_names
+    source=request.match_info["source"]
+    site=request.app[STATE]
+    if source not in source_names():
+        return response({"error":"Source inconnue."},404)
+    if await asyncio.to_thread(repo.get_runtime_setting,"source_enabled:"+source)=="false":
+        return response({"error":"Activez cette source avant de lancer son diagnostic."},400)
+    if source in site.diagnostic_sources:
+        return response({"error":"Un diagnostic de cette source est déjà en cours."},409)
+    site.check_rate("source-check:"+source,2,60)
+    request["audit_action"]="source_check"
+    site.diagnostic_sources.add(source)
+    try:
+        identifier=await asyncio.to_thread(web_repo.create_command,identity,"source_check")
+        await asyncio.to_thread(web_repo.finish_command,identifier,"running",{"message":"Diagnostic de la source en cours."})
+    except ValueError as exc:
+        site.diagnostic_sources.discard(source)
+        return response({"error":str(exc)},409)
+    except BaseException:
+        site.diagnostic_sources.discard(source)
+        raise
+    task=asyncio.create_task(_diagnose_source(site,identifier,source))
+    service._scan_tasks[identifier]=task
+    task.add_done_callback(lambda done:service._scan_tasks.pop(identifier,None))
+    return response({"id":identifier,"message":"Diagnostic démarré. Son avancement apparaît dans la santé des sources."},202)
 
 
 async def admin_accounts(request):
@@ -324,6 +487,30 @@ async def admin_accounts(request):
     return response({**result,"message":message},201 if request["audit_action"]=="account_create" else 200)
 
 
+async def admin_listing_reports(request):
+    identity=await require_admin(request)
+    site=request.app[STATE]
+    from services.listing_moderation import admin_reports,moderate
+    if request.method=="GET":
+        return response(await asyncio.to_thread(admin_reports,identity["user_id"]))
+    site.check_rate("moderation:"+str(identity["user_id"]),30,60)
+    try:
+        payload=await request.json()
+        if not isinstance(payload,dict):raise ValueError("Requête invalide.")
+        identifier=payload.get("listing_id")
+        if type(identifier) is not int or not 0<identifier<=1000000000:raise ValueError("Identifiant d’annonce invalide.")
+        operation=payload.get("operation")
+        if operation=="remove" and payload.get("confirmed") is not True:raise ValueError("Confirmez la suppression de cette annonce.")
+        result=await asyncio.to_thread(moderate,identity["user_id"],identifier,operation)
+    except PermissionError:
+        return response({"error":"Accès administrateur requis."},403)
+    except (ValueError,TypeError) as exc:
+        return response({"error":str(exc) or "Paramètres invalides."},400)
+    request["audit_action"]="listing_remove" if operation=="remove" else "report_dismiss"
+    site.global_at=0;site.account_cache.clear();site.admin_at=0
+    return response(result)
+
+
 async def listing_detail(request):
     from services.listing_details import get_listing_details
     site=request.app[STATE]
@@ -338,16 +525,25 @@ async def listing_detail(request):
     except ValueError:
         return response({"error":"Annonce introuvable."},404)
     row=await asyncio.to_thread(repo.get_listing_by_id,identifier)
-    if not row or row.inventory_status=="invalid":
+    if not row or row.inventory_status=="invalid" or row.removed_at is not None:
         return response({"error":"Annonce introuvable."},404)
     enriching=False
     try:
-        row=await asyncio.wait_for(get_listing_details(row.id),timeout=20)
+        # Serve stored content promptly while the shielded, shared worker
+        # continues. Fast cache hits still complete in this same response.
+        row=await asyncio.wait_for(get_listing_details(row.id),timeout=.15)
     except asyncio.TimeoutError:
         enriching=True
         row=await asyncio.to_thread(repo.get_listing_by_id,row.id)
+    if not row or row.removed_at is not None:
+        return response({"error":"Cette annonce a été supprimée du site."},404)
     publications=await asyncio.to_thread(repo.listing_publications,row.id)
-    return response({"listing":service._listing(row,full=True,publications=publications),"enriching":enriching})
+    row=await asyncio.to_thread(repo.get_listing_by_id,row.id)
+    if not row or row.removed_at is not None:
+        return response({"error":"Cette annonce a été supprimée du site."},404)
+    from services.member_api import detail_payload
+    result=await asyncio.to_thread(detail_payload,row,identity['user_id'],enriching)
+    return response(result)
 
 
 async def health(request):
@@ -373,17 +569,25 @@ async def static(request):
 
 
 def create_app(bot, *, directory: Path, origin: str, bot_username: str):
-    app = web.Application(middlewares=[boundary], client_max_size=8192)
+    app = web.Application(middlewares=[boundary], client_max_size=65536)
     app[STATE] = Website(bot, directory, origin.rstrip("/"), bot_username)
     app.router.add_get("/api/state", state)
+    app.router.add_get("/api/bootstrap", state)
     app.router.add_post("/api/action", action)
     app.router.add_post("/api/logout", logout)
     app.router.add_post("/api/login", login)
     app.router.add_get("/api/admin/live",admin_live)
+    app.router.add_get("/api/admin/providers",admin_providers)
+    app.router.add_get("/api/admin/reports",admin_listing_reports)
+    app.router.add_post("/api/admin/reports",admin_listing_reports)
+    app.router.add_post("/api/admin/providers",admin_providers)
+    app.router.add_post("/api/admin/sources/{source}/check",admin_source_check)
     app.router.add_post("/api/admin/accounts",admin_accounts)
     app.router.add_post("/api/admin/accounts/{identifier}",admin_accounts)
     app.router.add_get("/api/health", health)
     app.router.add_get("/api/listings/{identifier}", listing_detail)
+    from services.member_api import mount_routes
+    mount_routes(app)
     app.router.add_get("/{path:.*}", static)
     return app
 

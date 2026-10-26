@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 import json
 import os
+import threading
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -141,9 +143,14 @@ class DetailExtractionTests(unittest.TestCase):
 
     def test_telegram_pagination_escapes_html_within_limits(self):
         row=m.Listing(id=1,source="unit",external_id="1",url="https://test.example/1",title="T2 <jardin>",description=("<tag> & 🏠 "*1400),price=800,surface_m2=40,rooms=2)
+        row.details=json.dumps({'Date de publication':'2026-10-26T15:04:02Z','external_ad_id':'INTERNAL-PORTAL-ID','Honoraires':605})
         with patch.object(repo,"listing_publications",return_value=[{"source":"pap"}]):
             pages=detail_pages(row)
         self.assertGreater(len(pages),2)
+        self.assertIn('26/10/2026 16:04:02',"".join(pages))
+        self.assertIn('605 €',"".join(pages))
+        self.assertNotIn('INTERNAL-PORTAL-ID',"".join(pages))
+
         self.assertTrue(all(len(p.encode("utf-16-le"))//2<=3500 for p in pages))
         import html
         self.assertIn(row.description,html.unescape("".join(pages)))
@@ -192,3 +199,76 @@ class BeforeAlertEnrichmentTests(unittest.IsolatedAsyncioTestCase):
             canonical=await listing_details.resolve_new_listing(second)
         self.assertEqual(canonical.id,first.id)
         self.assertEqual(fetch.call_count,2)
+
+
+class SharedDetailTaskTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        PropertyDedupeTests.setUp(self)
+        patcher=patch.object(listing_details,"_tasks",{})
+        patcher.start();self.addCleanup(patcher.stop)
+        patcher=patch.object(listing_details,"_slots",asyncio.Semaphore(2))
+        patcher.start();self.addCleanup(patcher.stop)
+
+    async def test_fresh_success_and_partial_cache_skip_collection_and_reconciliation(self):
+        for status in ("complete","partial"):
+            with self.subTest(status=status):
+                row=PropertyDedupeTests.save(self,external_id=status).listing
+                with repo.session_scope() as session:
+                    current=session.get(m.Listing,row.id)
+                    current.details_status=status
+                    current.details_checked_at=datetime.utcnow()-timedelta(minutes=5)
+                with patch.object(listing_details,"_load") as load,patch.object(repo,"reconcile_duplicate_listings") as reconcile:
+                    result=await listing_details.get_listing_details(row.id)
+                self.assertEqual(result.id,row.id)
+                load.assert_not_called();reconcile.assert_not_called()
+
+    async def test_expired_partial_and_success_cache_are_refreshed(self):
+        for status,age in (("partial",timedelta(minutes=16)),("complete",timedelta(hours=25))):
+            with self.subTest(status=status):
+                row=PropertyDedupeTests.save(self,external_id=status).listing
+                with repo.session_scope() as session:
+                    current=session.get(m.Listing,row.id)
+                    current.details_status=status;current.details_checked_at=datetime.utcnow()-age
+                with patch.object(listing_details,"_load",return_value=row) as load,patch.object(repo,"reconcile_duplicate_listings") as reconcile:
+                    await listing_details.get_listing_details(row.id)
+                load.assert_called_once_with(row.id);reconcile.assert_called_once()
+
+    async def test_cancelled_reader_does_not_cancel_shared_collection_or_reconcile_twice(self):
+        row=PropertyDedupeTests.save(self).listing
+        entered,release=threading.Event(),threading.Event()
+        def collect(identifier):
+            entered.set()
+            if not release.wait(5):raise TimeoutError("Test worker was not released")
+            return row
+        with patch.object(listing_details,"_load",side_effect=collect) as load,patch.object(repo,"reconcile_duplicate_listings") as reconcile:
+            first=asyncio.create_task(listing_details.get_listing_details(row.id))
+            second=None
+            try:
+                for _ in range(100):
+                    if entered.is_set():break
+                    await asyncio.sleep(.01)
+                self.assertTrue(entered.is_set())
+                second=asyncio.create_task(listing_details.get_listing_details(row.id))
+                await asyncio.sleep(.03)
+                first.cancel()
+                with self.assertRaises(asyncio.CancelledError):await first
+                self.assertFalse(listing_details._tasks[row.id].cancelled())
+                release.set()
+                result=await asyncio.wait_for(second,2)
+                self.assertEqual(result.id,row.id)
+                load.assert_called_once_with(row.id);reconcile.assert_called_once()
+                await asyncio.sleep(0)
+                self.assertFalse(listing_details._tasks)
+            finally:
+                release.set()
+                await asyncio.gather(first,*([second] if second else []),return_exceptions=True)
+                await asyncio.gather(*listing_details._tasks.values(),return_exceptions=True)
+
+    async def test_background_failure_is_consumed_and_next_reader_can_retry(self):
+        row=PropertyDedupeTests.save(self).listing
+        with patch.object(listing_details,"_load",side_effect=RuntimeError("Portal unavailable")):
+            with self.assertLogs(listing_details.log,level="WARNING"):
+                with self.assertRaises(RuntimeError):await listing_details.get_listing_details(row.id)
+        self.assertFalse(listing_details._tasks)
+        with patch.object(listing_details,"_load",return_value=row),patch.object(repo,"reconcile_duplicate_listings"):
+            self.assertEqual((await listing_details.get_listing_details(row.id)).id,row.id)

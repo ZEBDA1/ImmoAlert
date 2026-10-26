@@ -39,22 +39,36 @@ if (strlen($secret) < 32 || str_contains($secret, 'REMPLACER')) {
 }
 $method = $_SERVER['REQUEST_METHOD'] ?? '';
 $route = $_GET['route'] ?? '';
-if (!is_string($route) || strlen($route) > 180) {
+if (!is_string($route) || strlen($route) > 2048 || str_contains($route, "\r") || str_contains($route, "\n")) {
     fail_request(404, 'Route inconnue.');
 }
-$read = preg_match('~^/api/(?:state|health|admin/live|listings/[1-9][0-9]{0,9})$~D', $route) === 1;
-$write = preg_match('~^/api/(?:login|logout|action|admin/accounts(?:/[1-9][0-9]{0,9})?)$~D', $route) === 1;
+$routeParts = parse_url($route);
+if ($routeParts === false || isset($routeParts['scheme']) || isset($routeParts['host']) || isset($routeParts['fragment'])) {
+    fail_request(404, 'Route inconnue.');
+}
+$path = $routeParts['path'] ?? '';
+$read = preg_match('~^/api/(?:state|bootstrap|inventory|tracking|search-counts|comparison|preferences|notifications|health|admin/(?:live|providers|reports|performance)|listings/[1-9][0-9]{0,9}(?:/(?:note|prices|updates|area))?)$~D', $path) === 1;
+$write = preg_match('~^/api/(?:login|logout|action|preferences|notifications|performance|listings/[1-9][0-9]{0,9}/note|admin/accounts(?:/[1-9][0-9]{0,9})?|admin/(?:providers|reports)|admin/sources/(?:leboncoin|seloger|pap|paruvendu|entreparticuliers|logicimmo|rentola|ouestfranceimmo)/check)$~D', $path) === 1;
+$query = [];
+parse_str($routeParts['query'] ?? '', $query);
+$allowedQuery = $path === '/api/tracking' ? ['q', 'stage', 'scope', 'upcoming', 'sort', 'page', 'limit'] : ($path === '/api/inventory' ? ['q', 'source', 'budget', 'surface', 'rooms', 'filter_id', 'favorites', 'sort', 'page', 'limit'] :
+    ($path === '/api/comparison' ? ['ids'] : (str_ends_with($path, '/prices') ? ['before', 'limit'] : ($path === '/api/notifications' ? ['before'] : []))));
+foreach ($query as $key => $value) {
+    if (!in_array($key, $allowedQuery, true) || !is_string($value) || strlen($value) > 500) {
+        fail_request(400, 'Paramètres invalides.');
+    }
+}
 if (!(($method === 'GET' && $read) || ($method === 'POST' && $write))) {
     fail_request(404, 'Route inconnue.');
 }
 if ($method === 'POST' && ($_SERVER['HTTP_ORIGIN'] ?? '') !== $public) {
     fail_request(403, 'Origine refusée.');
 }
-if ((int)($_SERVER['CONTENT_LENGTH'] ?? 0) > 8192) {
+if ((int)($_SERVER['CONTENT_LENGTH'] ?? 0) > 65536) {
     fail_request(413, 'Requête trop volumineuse.');
 }
-$body = file_get_contents('php://input', false, null, 0, 8193);
-if ($body === false || strlen($body) > 8192) {
+$body = file_get_contents('php://input', false, null, 0, 65537);
+if ($body === false || strlen($body) > 65536) {
     fail_request(413, 'Requête trop volumineuse.');
 }
 $stamp = (string)time();

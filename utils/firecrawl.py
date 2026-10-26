@@ -24,6 +24,11 @@ from config import settings
 from utils.cache import TTLCache
 from utils.fetch_diagnostics import note_problem
 
+
+def provider_enabled(provider):
+    from services.provider_credentials import provider_enabled as resolve
+    return resolve(provider)
+
 log = logging.getLogger(__name__)
 
 _CACHE = TTLCache(ttl_seconds=300)
@@ -46,7 +51,8 @@ _KEY_PAUSES: dict[str, tuple[float, str]] = {}
 
 
 def configured_keys() -> tuple[str, ...]:
-    return tuple(dict.fromkeys(key.strip() for key in (*settings.firecrawl_api_keys, settings.firecrawl_api_key or "") if key.strip()))
+    from services.provider_credentials import runtime_keys
+    return runtime_keys("firecrawl")
 
 
 def _key_id(key: str) -> str:
@@ -57,6 +63,9 @@ def _key_candidates() -> list[str | None]:
     global _KEY_CURSOR
     keys = configured_keys()
     if not keys:
+        from services.provider_credentials import managed_empty
+        if managed_empty("firecrawl"):
+            return []
         return [None]  # preserve an existing CLI login/keyless installation
     with _KEY_LOCK:
         offset = _KEY_CURSOR % len(keys)
@@ -151,9 +160,13 @@ def firecrawl_cli_path() -> Optional[str]:
 
 def firecrawl_available() -> bool:
     """True when the CLI is installed, enabled and not currently throttled."""
-    if not settings.firecrawl_enabled or firecrawl_rate_limited():
+    if not provider_enabled("firecrawl") or firecrawl_rate_limited():
         return False
     pool = key_pool_status()
+    if not pool["keys_configured"]:
+        from services.provider_credentials import managed_empty
+        if managed_empty("firecrawl"):
+            return False
     return firecrawl_cli_path() is not None and (not pool["keys_configured"] or pool["keys_available"] > 0)
 
 
@@ -189,6 +202,7 @@ class FirecrawlClient:
 
     def _run(self, cmd, *, timeout, output_path=None):
         """Try eligible credentials within one deadline; never rotate past 429."""
+        from services.provider_credentials import record_key_use
         failed = subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
         deadline = time.monotonic() + timeout
         for key in _key_candidates():
@@ -204,6 +218,7 @@ class FirecrawlClient:
                 proc = subprocess.run(cmd, capture_output=True, text=True, timeout=remaining,
                                       env=_cli_env(key), check=False)
             except Exception as exc:
+                record_key_use("firecrawl", key, "error")
                 log.warning("Firecrawl transport failed (%s)", type(exc).__name__)
                 return failed
             raw = proc.stdout or ""
@@ -223,20 +238,26 @@ class FirecrawlClient:
             message = f"{proc.stderr or ''} {provider_error}".lower()
             code = self._status_code(payload)
             if code == 429 or any(m in message for m in ("rate limit", "rate_limit", "ratelimit", "too many requests", "free tier", "429")):
+                record_key_use("firecrawl", key, "rate_limited")
                 # The CLI exposes no Retry-After header. Pause every key for
                 # 5 minutes; credential rotation must not bypass rate limits.
                 _note_rate_limit("HTTP 429")
                 return failed
             if code == 402 or any(m in message for m in ("insufficient credits", "not enough credits", "payment required", "402", "quota exceeded")):
+                record_key_use("firecrawl", key, "exhausted")
                 _pause_key(key, "credits")
                 continue
             if code in {401, 403} or any(m in message for m in ("not authenticated", "invalid token", "invalid api key", "unauthorized", "401", "403")):
+                record_key_use("firecrawl", key, "invalid")
                 _pause_key(key, "auth")
                 continue
             if code is not None and code >= 400:
+                record_key_use("firecrawl", key, "error")
                 return failed
             if proc.returncode != 0 or payload.get("success") is False:
+                record_key_use("firecrawl", key, "error")
                 return failed
+            record_key_use("firecrawl", key, "ok")
             return subprocess.CompletedProcess(cmd, 0, stdout=proc.stdout, stderr="")
         return failed
 
@@ -638,12 +659,15 @@ def firecrawl_status() -> FirecrawlStatus:
     if not binary:
         return FirecrawlStatus(
             installed=False,
-            enabled=settings.firecrawl_enabled,
+            enabled=provider_enabled("firecrawl"),
             authenticated=False,
             detail="CLI firecrawl introuvable (npm i -g firecrawl-cli)",
         )
     try:
         candidates = _key_candidates()
+        if not candidates:
+            return FirecrawlStatus(installed=True, enabled=provider_enabled("firecrawl"),
+                authenticated=False, detail="Aucune clé active disponible dans le panel admin.")
         env = _cli_env(candidates[0] if candidates else None)
         proc = subprocess.run(
             [binary, "--status"],
@@ -657,7 +681,7 @@ def firecrawl_status() -> FirecrawlStatus:
     except Exception as exc:
         return FirecrawlStatus(
             installed=True,
-            enabled=settings.firecrawl_enabled,
+            enabled=provider_enabled("firecrawl"),
             authenticated=False,
             detail=f"status indisponible: {type(exc).__name__}",
         )
@@ -665,7 +689,7 @@ def firecrawl_status() -> FirecrawlStatus:
     if proc.returncode != 0:
         return FirecrawlStatus(
             installed=True,
-            enabled=settings.firecrawl_enabled,
+            enabled=provider_enabled("firecrawl"),
             authenticated=False,
             detail=f"statut indisponible (code {proc.returncode})",
         )
@@ -681,7 +705,7 @@ def firecrawl_status() -> FirecrawlStatus:
 
     return FirecrawlStatus(
         installed=True,
-        enabled=settings.firecrawl_enabled,
+        enabled=provider_enabled("firecrawl"),
         authenticated=authenticated,
         credits_remaining=credits,
         concurrency=concurrency,

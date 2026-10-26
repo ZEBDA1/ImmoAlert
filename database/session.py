@@ -114,14 +114,31 @@ def _run_light_migrations() -> None:
     # Add nullable columns only. This keeps SQLite migrations safe and rollback-friendly.
     try:
         datetime_type = "DATETIME" if settings.database_url.startswith("sqlite") else "TIMESTAMP NULL"
+        _add_column_if_missing("provider_configurations", "enabled", "BOOLEAN")
+        _add_column_if_missing("provider_configurations", "keyless_blocked", "BOOLEAN NOT NULL DEFAULT FALSE")
         _add_column_if_missing("users", "premium_until", datetime_type)
+        _add_column_if_missing("source_runs", "diagnostics_json", "TEXT")
         _add_column_if_missing("web_sessions", "user_id", "INTEGER")
         _add_column_if_missing("web_sessions", "web_account_id", "INTEGER")
         _add_column_if_missing("web_commands", "profile_user_id", "INTEGER")
+        for column,definition in {
+            "price":"INTEGER", "availability_status":"VARCHAR(24)",
+            "availability_checked_at":datetime_type, "availability_detail":"VARCHAR(200)",
+            "absence_count":"INTEGER NOT NULL DEFAULT 0", "absence_first_at":datetime_type,
+        }.items():
+            _add_column_if_missing("listing_publications",column,definition)
+        for column,definition in {
+            "search_text":"TEXT",
+            "commute_minutes":"INTEGER", "commute_destination":"VARCHAR(160)",
+            "commute_mode":"VARCHAR(12)", "parking":"VARCHAR(12)", "accessibility":"VARCHAR(12)",
+        }.items():
+            _add_column_if_missing("member_listing_notes",column,definition)
         _create_index_if_missing("ix_web_sessions_user_id", "web_sessions", "user_id")
         _create_index_if_missing("ix_web_commands_profile_user_id", "web_commands", "profile_user_id")
+        _create_index_if_missing("ix_publication_availability_checked", "listing_publications", "availability_checked_at")
 
         listing_columns = {
+            "search_text":"TEXT",
             "last_seen_at": datetime_type,
             "inventory_status": "VARCHAR(24)",
             "canonical_signature": "VARCHAR(64)",
@@ -136,9 +153,22 @@ def _run_light_migrations() -> None:
             "latitude": "FLOAT",
             "longitude": "FLOAT",
             "geo_precision": "VARCHAR(24)",
+            "removed_at": datetime_type,
+            "removed_by": "INTEGER",
         }
         for column, definition in listing_columns.items():
             _add_column_if_missing("listings", column, definition)
+
+        from services.deduplication import normalized
+        with engine.begin() as conn:
+            missing=conn.execute(text("SELECT id, title, location FROM listings WHERE search_text IS NULL ORDER BY id"))
+            while batch:=missing.fetchmany(500):
+                conn.execute(text("UPDATE listings SET search_text=:value WHERE id=:id"),[{"id":row[0],"value":normalized((row[1] or "")+" "+(row[2] or ""))} for row in batch])
+
+        with engine.begin() as conn:
+            missing=conn.execute(text("SELECT user_id, listing_id, note, commute_destination FROM member_listing_notes WHERE search_text IS NULL"))
+            while batch:=missing.fetchmany(500):
+                conn.execute(text("UPDATE member_listing_notes SET search_text=:value WHERE user_id=:user_id AND listing_id=:listing_id"),[{"user_id":row[0],"listing_id":row[1],"value":normalized((row[2] or "")+" "+(row[3] or ""))} for row in batch])
 
         alert_columns = {
             "filter_id": "INTEGER",
@@ -155,6 +185,7 @@ def _run_light_migrations() -> None:
         _create_index_if_missing("ix_listings_duplicate_of_id", "listings", "duplicate_of_id")
         _create_index_if_missing("ix_listings_inventory_status", "listings", "inventory_status")
         _create_index_if_missing("ix_listings_last_seen_at", "listings", "last_seen_at")
+        _create_index_if_missing("ix_listings_removed_at", "listings", "removed_at")
         _create_index_if_missing("ix_listings_normalized_city", "listings", "normalized_city")
         _create_index_if_missing("ix_listings_normalized_postal_code", "listings", "normalized_postal_code")
         _create_index_if_missing("ix_sent_alerts_filter_id", "sent_alerts", "filter_id")
